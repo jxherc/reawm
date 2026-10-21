@@ -379,7 +379,8 @@ final class WM {
             return Tab(id: w.id, title: t.isEmpty ? (w.app?.localizedName ?? "") : t, icon: icon(w.pid), active: w.id == g.active)
         }
         let s = strips[g.id] ?? makeStrip(g)
-        s.show(stripRect(f), tabs, above: a.id, look: menuBarLook())
+        s.show(stripRect(roomy(f)), tabs, above: a.id, look: menuBarLook())
+        if roomy(f) != f { clampSoon(a) }
     }
 
     // the shown window moved or resized: move the strip along. the window can't
@@ -393,7 +394,9 @@ final class WM {
             return
         }
         guard s.isVisible else { return }
-        s.move(stripRect(f))
+        // the bar stays in its spot even while the window is too tall for a moment
+        // (a zoom, a fill): it never follows the window up under the menu bar
+        s.move(stripRect(roomy(f)))
         if roomy(f) != f { clampSoon(a) }
     }
 
@@ -475,8 +478,9 @@ final class WM {
             } else {
                 seen[g.id] = (r, Date())
             }
-            s.move(stripRect(r))
+            s.move(stripRect(roomy(r)))
             s.order(.above, relativeTo: Int(g.active))
+            if roomy(r) != r, let a = tracker.wins[g.active] { clampSoon(a) }
         }
     }
 
