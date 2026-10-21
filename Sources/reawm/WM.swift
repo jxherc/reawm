@@ -28,6 +28,7 @@ final class WM {
     private var loose: Set<WinID> = []           // pulled out by hand, so auto tabbing leaves it alone
     private var ready = false
     private var cameFrom: [UUID: WinID] = [:]   // the tab shown before the current one, per group
+    private var lastShown: [WinID: Date] = [:]
     private var seen: [UUID: (f: CGRect, since: Date)] = [:]   // shown window's frame and how long it's held
 
     private var cand: (t: Target, at: CGPoint)?
@@ -110,9 +111,14 @@ final class WM {
             guard tear == nil, let g = groups.group(of: w.id), w.frame != nil else { return }
             if g.active == w.id { glue(g); return }
             // only the app in front can pull its window forward: apps in the back re-report
-            // focus when we move their windows, and following that flips tabs back and forth
-            guard Date() >= quietUntil, NSWorkspace.shared.frontmostApplication?.processIdentifier == w.pid else { return }
-            switchTo(w.id, in: g, focus: false)
+            // focus when we move their windows, and following that flips tabs back and forth.
+            // the focus report can beat the activation, so look again a moment later.
+            guard Date() >= quietUntil else { return }
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == w.pid {
+                switchTo(w.id, in: g, focus: false)
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in self?.follow(app: w.pid) }
+            }
         case .moved, .resized:
             guard let g = groups.group(of: w.id) else { return }
             if g.active == w.id { follow(g) } else { summoned(w.id, in: g, at: w.frame) }
@@ -154,14 +160,30 @@ final class WM {
         }
     }
 
-    // switching apps doesn't change the app's focused window, so no AX event: ask it
+    // switching apps doesn't change the app's focused window, so no AX event: ask it.
+    // switchers like AltTab activate first and raise the window a moment later, so ask twice.
     func activated(_ pid: pid_t) {
         guard !Settings.paused else { return }
-        let app = AXUIElementCreateApplication(pid)
-        if let el: AXUIElement = app.get(kAXFocusedWindowAttribute), let w = tracker.win(for: el, pid: pid) {
-            event(.focused, w)
-        }
+        follow(app: pid)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in self?.follow(app: pid) }
         glueAll()
+    }
+
+    // bring the front app's window into view
+    func follow(app pid: pid_t) {
+        guard !Settings.paused, tear == nil, grab == nil, Date() >= quietUntil,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return }
+        let el: AXUIElement? = AXUIElementCreateApplication(pid).get(kAXFocusedWindowAttribute)
+        var w = el.flatMap { tracker.win(for: $0, pid: pid) }
+        if let f = w, groups.group(of: f.id) == nil { return }   // it's showing a window of its own
+        if w == nil {
+            // focus on nothing: show the app's most recent tab, unless one is already showing
+            if groups.all.contains(where: { tracker.wins[$0.active]?.pid == pid }) { return }
+            w = groups.all.flatMap(\.wins).compactMap { tracker.wins[$0] }.filter { $0.pid == pid }
+                .max { (lastShown[$0.id] ?? .distantPast) < (lastShown[$1.id] ?? .distantPast) }
+        }
+        guard let w, let g = groups.group(of: w.id), g.active != w.id else { return }
+        switchTo(w.id, in: g, focus: false)
     }
 
     // MARK: showing groups
@@ -173,6 +195,7 @@ final class WM {
         guard let f = forced ?? live ?? frames[g.id] ?? a.frame else { return }
         frames[g.id] = f
         place(a, f)
+        lastShown[a.id] = Date()
         for id in g.hidden { if let w = tracker.wins[id] { park(w, near: f) } }
         glue(g)
     }
@@ -183,7 +206,7 @@ final class WM {
         // could catch it mid close animation.
         if g.active != id { cameFrom[g.id] = g.active }
         groups.select(id)
-        quietUntil = Date().addingTimeInterval(0.6)
+        quietUntil = Date().addingTimeInterval(0.35)
         show(g)
         if focus { tracker.wins[id]?.focus() }
         changed()
@@ -523,8 +546,12 @@ final class WM {
     func place(_ w: Win, _ r: CGRect) {
         parked.remove(w.id)
         if w.fullscreen { return }
-        if let f = w.frame, abs(f.minX - r.minX) < 1, abs(f.minY - r.minY) < 1, abs(f.width - r.width) < 1, abs(f.height - r.height) < 1 { return }
-        w.setFrame(r)
+        guard let f = w.frame else { w.setFrame(r); return }
+        let sameSize = abs(f.width - r.width) < 1 && abs(f.height - r.height) < 1
+        if sameSize, abs(f.minX - r.minX) < 1, abs(f.minY - r.minY) < 1 { return }
+        // hidden tabs keep the bar's size, so showing one is only a move: resizing makes
+        // big windows lay themselves out again, which is the slow part
+        if sameSize { w.move(to: r.origin) } else { w.setFrame(r) }
     }
 
     // out of sight: past the bottom corner of its display with one point showing.
