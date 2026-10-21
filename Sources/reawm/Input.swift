@@ -3,14 +3,15 @@ import Carbon
 
 // one event tap that watches the left mouse button (window drags)
 final class Tap {
-    var onMouse: ((CGEventType, CGPoint) -> Void)?
+    // return a point to move the event there before any app sees it (the bar's wall)
+    var onMouse: ((CGEventType, CGPoint) -> CGPoint?)?
     private var port: CFMachPort?
 
     func start() -> Bool {
         let types: [CGEventType] = [.leftMouseDown, .leftMouseUp, .leftMouseDragged]
         let mask = types.reduce(CGEventMask(0)) { $0 | (1 << $1.rawValue) }
         let me = Unmanaged.passUnretained(self).toOpaque()
-        guard let port = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly,
+        guard let port = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
                                            eventsOfInterest: mask, callback: tapCallback, userInfo: me) else { return false }
         self.port = port
         CFRunLoopAddSource(CFRunLoopGetMain(), CFMachPortCreateRunLoopSource(nil, port, 0), .commonModes)
@@ -23,7 +24,14 @@ final class Tap {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
             if let port { CGEvent.tapEnable(tap: port, enable: true) }
         case .leftMouseDown, .leftMouseUp, .leftMouseDragged:
-            onMouse?(type, e.location)
+            let p = e.location
+            // the app resizing or moving its window reads this event, so the limit has to
+            // be in the event itself: moving the pointer afterwards is a frame too late
+            if let q = onMouse?(type, p), q != p {
+                e.location = q
+                if q.y != p.y { e.setIntegerValueField(.mouseEventDeltaY, value: 0) }
+                if q.x != p.x { e.setIntegerValueField(.mouseEventDeltaX, value: 0) }
+            }
         default:
             break
         }

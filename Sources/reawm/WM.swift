@@ -48,6 +48,7 @@ final class WM {
         var moving = false
         var resizing = false
         var edges: Set<Settings.Side> = []   // which edges a resize is dragging
+        var edgesKnown = false
     }
 
     // a window being moved or resized by hand. a press that drags content out of a
@@ -590,20 +591,23 @@ final class WM {
 
     // MARK: dragging
 
-    func mouse(_ t: CGEventType, _ p: CGPoint) {
-        guard !Settings.paused else { return }
-        if tear != nil { tearMouse(t, p); return }
+    // returns where the event should land instead, when a drag hits the bar's wall
+    func mouse(_ t: CGEventType, _ p: CGPoint) -> CGPoint? {
+        guard !Settings.paused else { return nil }
+        if tear != nil { tearMouse(t, p); return nil }
         switch t {
         case .leftMouseDown:
-            guard let w = tracker.win(at: p), let f = w.frame else { grab = nil; return }
+            guard let w = tracker.win(at: p), let f = w.frame else { grab = nil; return nil }
             grab = Grab(win: w, start: f, at: p)
         case .leftMouseDragged:
-            guard var g = grab else { return }
+            guard var g = grab else { return nil }
             var p = p
             if !g.moving, !g.resizing, let f = g.win.frame {
                 if f.size != g.start.size { g.resizing = true } else if f.origin != g.start.origin { g.moving = true }
             }
-            if g.resizing, let f = g.win.frame {
+            // which edges a resize drags: look until it's known, not on every event
+            if g.resizing, !g.edgesKnown, let f = g.win.frame {
+                g.edgesKnown = true
                 if f.minY != g.start.minY { g.edges.insert(.top) }
                 if f.minX != g.start.minX { g.edges.insert(.left) }
                 if f.maxX != g.start.maxX { g.edges.insert(.right) }
@@ -614,6 +618,7 @@ final class WM {
                 let w = wall(g, p)
                 if w != p {
                     p = w
+                    // the event lands on the wall (see Tap), and the pointer stays there too
                     CGWarpMouseCursorPosition(p)
                     CGAssociateMouseAndMouseCursorPosition(1)   // no input pause after the warp
                 }
@@ -628,8 +633,9 @@ final class WM {
                 aim(p, dragging: g.win.id)
             }
             grab = g
+            return p
         case .leftMouseUp:
-            guard let g = grab else { return }
+            guard let g = grab else { return nil }
             grab = nil
             if let t = endAim() {
                 join(g.win, t)
@@ -644,6 +650,7 @@ final class WM {
         default:
             break
         }
+        return nil
     }
 
     // the window or strip under p that a drop would join. only a window's title
