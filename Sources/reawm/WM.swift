@@ -29,6 +29,8 @@ final class WM {
     private var ready = false
     private var cameFrom: [UUID: WinID] = [:]   // the tab shown before the current one, per group
     private var lastShown: [WinID: Date] = [:]
+    private var unfit: Set<WinID> = []            // can't be resized freely; tried again after a restart
+    private var accepted: [UUID: CGRect] = [:]    // what the shown window made of the group frame
     private var seen: [UUID: (f: CGRect, since: Date)] = [:]   // shown window's frame and how long it's held
 
     private var cand: (t: Target, at: CGPoint)?
@@ -200,6 +202,12 @@ final class WM {
         frames[g.id] = f
         place(a, f)
         lastShown[a.id] = Date()
+        accepted[g.id] = nil
+        let shownID = a.id
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self, g.active == shownID, let r = tracker.wins[shownID]?.frame else { return }
+            accepted[g.id] = r
+        }
         for id in g.hidden { if let w = tracker.wins[id] { park(w, near: f) } }
         glue(g)
     }
@@ -317,7 +325,10 @@ final class WM {
             guard let s = strips[g.id], s.isVisible else { glue(g); continue }
             // the group's frame only takes a size that held still for a second, so a
             // closing window's shrink animation never becomes the size of the next tab
-            if let sn = seen[g.id], sn.f == r {
+            // a window that keeps its own aspect ratio isn't the user resizing the bar
+            if let ac = accepted[g.id], abs(ac.width - r.width) < 2, abs(ac.height - r.height) < 2 {
+                seen[g.id] = nil
+            } else if let sn = seen[g.id], sn.f == r {
                 if Date().timeIntervalSince(sn.since) > 1 { frames[g.id] = r }
             } else {
                 seen[g.id] = (r, Date())
@@ -793,7 +804,7 @@ final class WM {
     }
 
     func eligible(_ w: Win) -> Bool {
-        !Settings.excluded.contains(w.bundle) && !loose.contains(w.id) && groups.group(of: w.id) == nil
+        !Settings.excluded.contains(w.bundle) && !loose.contains(w.id) && !unfit.contains(w.id) && groups.group(of: w.id) == nil
             && !w.minimized && !w.fullscreen && isOnScreen(w.id) && (w.frame.map(visible) ?? false)
     }
 
@@ -863,12 +874,18 @@ final class WM {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self, let f = frames[g.id] else { return }
             for id in ids {
-                guard groups.group(of: id) === g, let w = tracker.wins[id], let r = w.frame,
-                      abs(r.width - f.width) > 40 || abs(r.height - f.height) > 40 else { continue }
+                guard groups.group(of: id) === g, let w = tracker.wins[id], let r = w.frame else { continue }
+                // a side that reached the bar's size, or at least moved toward it, is fine:
+                // a video keeps its aspect ratio but still grows both ways. a settings
+                // window whose width can't change at all can't live in a bar.
+                let before = orig[id]?.size ?? r.size
+                let wide = abs(r.width - f.width) <= 40 || abs(r.width - before.width) > 40
+                let tall = abs(r.height - f.height) <= 40 || abs(r.height - before.height) > 40
+                if wide && tall { continue }
                 note("\(id) (\(w.app?.localizedName ?? "?")) can't be \(Int(f.width))x\(Int(f.height)), stays out of the bar")
                 let shown = g.active == id
                 groups.remove(id)
-                loose.insert(id)
+                unfit.insert(id)
                 if let o = orig[id], visible(o) { place(w, o) } else { place(w, CGRect(origin: f.origin, size: r.size)) }
                 orig[id] = nil
                 settle(g, shownLeft: shown)
