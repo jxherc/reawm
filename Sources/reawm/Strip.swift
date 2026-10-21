@@ -33,11 +33,19 @@ final class Strip: NSPanel {
     // r is in global top-left coords. the strip sits right above window `above`.
     // look: the menu bar's appearance, so the text matches it.
     func show(_ r: CGRect, _ list: [Tab], above: WinID, look: NSAppearance?) {
-        if let look, appearance?.name != look.name { appearance = look }
+        match(look)
         move(r)
         tabs.vertical = Settings.side != .top
         tabs.set(list)
         order(.above, relativeTo: Int(above))
+    }
+
+    // the menu bar's text flips between light and dark with the wallpaper (a dynamic
+    // wallpaper going dark at night, or a new picture): follow it
+    func match(_ look: NSAppearance?) {
+        guard let look, appearance?.name != look.name else { return }
+        appearance = look
+        tabs.needsDisplay = true
     }
 
     // just follow the window, nothing redrawn

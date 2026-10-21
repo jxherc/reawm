@@ -397,8 +397,16 @@ final class WM {
 
     // cheap pass for every group: follow moves, hide strips whose window went away
     // (other Space, app hidden, minimized). titles only change through glue().
+    private var lastLook: NSAppearance.Name?
+
     func glueAll() {
         guard !Settings.paused else { return }
+        let look = menuBarLook()
+        if let look, look.name != lastLook {
+            note("menu bar text is now \(look.name.rawValue)")
+            lastLook = look.name
+        }
+        strips.values.forEach { $0.match(look) }
         reap()
         let live = onScreen(unknown: { [tracker] in tracker.look($0) })
         returned(live)
