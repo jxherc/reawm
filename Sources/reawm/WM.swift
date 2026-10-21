@@ -321,13 +321,20 @@ final class WM {
 
     // a hidden tab back on screen without us (⌘` makes the app pull it in) is
     // the one you want: show it in the group's frame
+    // a hidden tab on screen without us: ⌘` made the app pull it in, or it just came back
+    // from full screen. if its app is in front it's the one you want, so it gets the bar's
+    // spot; otherwise it's tucked away again so nothing overlaps.
     func summoned(_ id: WinID, in g: Group, at f: CGRect?) {
         // the window server lags a moment behind our own moves, so a fresh park can still look visible
-        guard tear == nil, parked.contains(id), let f, visible(f), Date() >= quietUntil,
-              Date().timeIntervalSince(parkedAt[id] ?? .distantPast) > 1,
-              NSWorkspace.shared.frontmostApplication?.processIdentifier == tracker.wins[id]?.pid else { return }
-        note("hidden tab \(id) came back on screen by itself")
-        switchTo(id, in: g, focus: false)
+        guard tear == nil, let f, visible(f), Date() >= quietUntil, let w = tracker.wins[id], !w.fullscreen,
+              !parked.contains(id) || Date().timeIntervalSince(parkedAt[id] ?? .distantPast) > 1 else { return }
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == w.pid {
+            note("hidden tab \(id) came back on screen, showing it")
+            switchTo(id, in: g, focus: false)
+        } else {
+            note("hidden tab \(id) came back on screen, tucking it away")
+            park(w, near: frames[g.id] ?? f)
+        }
     }
 
     // after a window left g, show whatever should show now
@@ -411,6 +418,7 @@ final class WM {
     // (other Space, app hidden, minimized). titles only change through glue().
     private var lastLook: NSAppearance.Name?
     private var lastGroup: UUID?   // the bar you last switched in
+    private var missingSince: [UUID: Date] = [:]   // when a bar's shown window left the screen
 
     func glueAll() {
         guard !Settings.paused else { return }
@@ -428,11 +436,24 @@ final class WM {
             if let gr = grab, gr.moving, gr.win.id == g.active { continue }
             guard let r = live[g.active], !parked.contains(g.active) else {
                 strips[g.id]?.orderOut(nil)
-                // the other tabs' slivers are still on screen, so this is the bar's Space
-                // and its shown window really went away
-                if !parked.contains(g.active), g.hidden.contains(where: { live[$0] != nil }) { vanished(g) }
+                // the other tabs' tucked-away slivers are still on screen, so this is the bar's
+                // Space and its shown window went away. it has to stay gone for a moment: going
+                // full screen also leaves this Space, before macOS marks the window full screen.
+                if !parked.contains(g.active), g.hidden.contains(where: { live[$0] != nil && parked.contains($0) }) {
+                    if let since = missingSince[g.id] {
+                        if Date().timeIntervalSince(since) > 0.6 {
+                            missingSince[g.id] = nil
+                            vanished(g)
+                        }
+                    } else {
+                        missingSince[g.id] = Date()
+                    }
+                } else {
+                    missingSince[g.id] = nil
+                }
                 continue
             }
+            missingSince[g.id] = nil
             // a full screen window (a video, say) owns the whole display: no bar on it, and
             // ordering the bar above it would pull the bar into its full screen Space
             if covers(r) {
@@ -514,7 +535,7 @@ final class WM {
                 if !exists(id) { returnTo[id] = nil }   // really closed after all
                 continue
             }
-            guard let r = live[id], visible(r), groups.group(of: id) == nil else { continue }
+            guard let r = live[id], visible(r), !covers(r), groups.group(of: id) == nil, !w.fullscreen else { continue }
             returnTo[id] = nil
             rejoin(w, partner)
         }
