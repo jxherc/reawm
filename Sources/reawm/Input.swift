@@ -42,6 +42,8 @@ final class Hotkeys {
     private var next: UInt32 = 1
 
     static let ctrlOpt = UInt32(controlKey | optionKey)
+    static let opt = UInt32(optionKey)
+    static let optShift = UInt32(optionKey | shiftKey)
 
     init() {
         var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))

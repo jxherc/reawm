@@ -25,13 +25,13 @@ public final class Groups: Codable {
     public func group(of w: WinID) -> Group? { all.first { $0.wins.contains(w) } }
 
     // put w into target's group (one is made if target is alone) at index, or at
-    // the end. w becomes the shown tab.
+    // the end. w becomes the shown tab unless select is false.
     @discardableResult
-    public func join(_ w: WinID, onto target: WinID, at index: Int? = nil) -> Group? {
+    public func join(_ w: WinID, onto target: WinID, at index: Int? = nil, select: Bool = true) -> Group? {
         guard w != target else { return nil }
         if let g = group(of: w), g.wins.contains(target) {
             if let index { move(w, to: index) }
-            g.active = w
+            if select { g.active = w }
             return g
         }
         remove(w)
@@ -41,7 +41,7 @@ public final class Groups: Codable {
             return g
         }()
         g.wins.insert(w, at: min(max(0, index ?? g.wins.count), g.wins.count))
-        g.active = w
+        if select { g.active = w }
         return g
     }
 

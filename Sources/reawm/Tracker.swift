@@ -12,6 +12,7 @@ final class Tracker {
     private var observers: [pid_t: AXObserver] = [:]
     private var appEls: [pid_t: AXUIElement] = [:]
     var onEvent: ((WinEvent, Win) -> Void)?
+    var onDestroyed: (() -> Void)?   // something closed that we couldn't match to a window
 
     func start() {
         let nc = NSWorkspace.shared.notificationCenter
@@ -35,7 +36,8 @@ final class Tracker {
         var obs: AXObserver?
         guard AXObserverCreate(pid, axCallback, &obs) == .success, let obs else { return }
         let me = Unmanaged.passUnretained(self).toOpaque()
-        for n in [kAXWindowCreatedNotification, kAXFocusedWindowChangedNotification] {
+        // window-level "destroyed" never arrives on macOS 27, the app-level one does
+        for n in [kAXWindowCreatedNotification, kAXFocusedWindowChangedNotification, kAXUIElementDestroyedNotification] {
             AXObserverAddNotification(obs, el, n as CFString, me)
         }
         CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(obs), .defaultMode)
@@ -111,6 +113,8 @@ final class Tracker {
             if let w = win(for: el, pid: pid) {
                 wins[w.id] = nil
                 onEvent?(.gone, w)
+            } else {
+                onDestroyed?()
             }
         case kAXWindowMovedNotification:
             if let w = win(for: el, pid: pid) { onEvent?(.moved, w) }

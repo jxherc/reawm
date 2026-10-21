@@ -38,3 +38,23 @@ struct Display {
         return NSRect(x: r.minX, y: primaryH - r.maxY, width: r.width, height: r.height)
     }
 }
+
+// the current macOS Space of each display, through SkyLight (private, read only)
+enum Spaces {
+    private typealias MainConn = @convention(c) () -> Int32
+    private typealias CurrentSpace = @convention(c) (Int32, CFString) -> UInt64
+
+    private static let sky = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY)
+    private static let mainConn: MainConn? = sym("SLSMainConnectionID")
+    private static let currentSpace: CurrentSpace? = sym("SLSManagedDisplayGetCurrentSpace")
+
+    private static func sym<T>(_ name: String) -> T? {
+        guard let sky, let p = dlsym(sky, name) else { return nil }
+        return unsafeBitCast(p, to: T.self)
+    }
+
+    static func current(_ d: Display) -> UInt64 {
+        guard let mainConn, let currentSpace else { return 0 }
+        return currentSpace(mainConn(), d.uuid as CFString)
+    }
+}

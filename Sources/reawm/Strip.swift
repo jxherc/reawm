@@ -36,6 +36,7 @@ final class Strip: NSPanel {
     // r is in global top-left coords. the strip sits right above window `above`.
     func show(_ r: CGRect, _ list: [Tab], above: WinID) {
         move(r)
+        tabs.vertical = Settings.side != .top
         tabs.set(list)
         order(.above, relativeTo: Int(above))
     }
@@ -81,6 +82,7 @@ final class TabsView: NSView {
     var onTear: ((WinID) -> Void)?   // dragged off the strip
 
     private(set) var list: [Tab] = []
+    var vertical = false   // a sidebar: one row per tab
     private var hover: Int?
     private var press: (i: Int, at: NSPoint, dragged: Bool)?
     private var closing: Int?
@@ -93,38 +95,54 @@ final class TabsView: NSView {
         needsDisplay = true
     }
 
-    var tabWidth: CGFloat { bounds.width / CGFloat(max(1, list.count)) }
+    // a top bar splits its width evenly; a sidebar stacks rows, squeezing them when there are many
+    static let pad: CGFloat = 6
+    var slot: CGFloat {
+        let n = CGFloat(max(1, list.count))
+        return vertical ? min(32, max(22, (bounds.height - Self.pad * 2) / n)) : bounds.width / n
+    }
 
-    func index(at x: CGFloat) -> Int {
-        min(max(0, Int(x / tabWidth)), max(0, list.count - 1))
+    private func along(_ p: NSPoint) -> CGFloat { vertical ? p.y - Self.pad : p.x }
+
+    func index(at p: NSPoint) -> Int {
+        min(max(0, Int(along(p) / slot)), max(0, list.count - 1))
+    }
+
+    // where a dropped window would go: the gap nearest p
+    func insertion(at p: NSPoint) -> Int {
+        min(max(0, Int((along(p) / slot).rounded())), list.count)
     }
 
     func rect(_ i: Int) -> NSRect {
-        NSRect(x: CGFloat(i) * tabWidth, y: 0, width: tabWidth, height: bounds.height)
+        vertical
+            ? NSRect(x: 0, y: Self.pad + CGFloat(i) * slot, width: bounds.width, height: slot)
+            : NSRect(x: CGFloat(i) * slot, y: 0, width: slot, height: bounds.height)
     }
 
     func closeRect(_ i: Int) -> NSRect {
         let r = rect(i)
-        return NSRect(x: r.maxX - 24, y: r.midY - 8, width: 16, height: 16)
+        return NSRect(x: r.maxX - (vertical ? 28 : 24), y: r.midY - 8, width: 16, height: 16)
     }
 
     override func draw(_ dirty: NSRect) {
         let n = list.count
         for (i, t) in list.enumerated() {
             let r = rect(i)
-            let chip = r.insetBy(dx: 3, dy: 3)
+            let chip = vertical ? r.insetBy(dx: 6, dy: 2) : r.insetBy(dx: 3, dy: 3)
             if t.active || hover == i {
                 NSColor.labelColor.withAlphaComponent(t.active ? 0.13 : 0.06).setFill()
                 NSBezierPath(roundedRect: chip, xRadius: 7, yRadius: 7).fill()
             }
-            // a divider only between two quiet tabs
-            if i < n - 1, !t.active, !list[i + 1].active, hover != i, hover != i + 1 {
+            // a divider only between two quiet tabs, side by side
+            if !vertical, i < n - 1, !t.active, !list[i + 1].active, hover != i, hover != i + 1 {
                 NSColor.separatorColor.setFill()
                 NSRect(x: r.maxX - 0.5, y: r.minY + 8, width: 1, height: r.height - 16).fill()
             }
 
             let showClose = hover == i
-            let room = chip.insetBy(dx: showClose ? 26 : 10, dy: 0)
+            var room = chip.insetBy(dx: 10, dy: 0)
+            if showClose { room.size.width -= 16 }
+            if showClose, !vertical { room = chip.insetBy(dx: 26, dy: 0) }
             let font = NSFont.systemFont(ofSize: 12, weight: t.active ? .medium : .regular)
             let para = NSMutableParagraphStyle()
             para.lineBreakMode = .byTruncatingTail
@@ -136,7 +154,8 @@ final class TabsView: NSView {
             let title = t.title.isEmpty ? " " : t.title
             let tw = min(ceil((title as NSString).size(withAttributes: attrs).width), max(0, room.width - 22))
             let total = 16 + 6 + tw
-            let x = room.midX - total / 2
+            // centred in a top bar, left-aligned down a sidebar
+            let x = vertical ? room.minX : room.midX - total / 2
             t.icon.draw(in: NSRect(x: x, y: r.midY - 8, width: 16, height: 16), from: .zero, operation: .sourceOver,
                         fraction: t.active ? 1 : 0.75, respectFlipped: true, hints: nil)
             let th = font.ascender - font.descender
@@ -167,7 +186,7 @@ final class TabsView: NSView {
     }
 
     override func mouseMoved(with e: NSEvent) {
-        let h = list.isEmpty ? nil : index(at: convert(e.locationInWindow, from: nil).x)
+        let h = list.isEmpty ? nil : index(at: convert(e.locationInWindow, from: nil))
         if h != hover { hover = h; needsDisplay = true }
     }
 
@@ -179,7 +198,7 @@ final class TabsView: NSView {
     override func mouseDown(with e: NSEvent) {
         guard !list.isEmpty else { return }
         let p = convert(e.locationInWindow, from: nil)
-        let i = index(at: p.x)
+        let i = index(at: p)
         if hover == i, closeRect(i).insetBy(dx: -3, dy: -3).contains(p) {
             closing = i
         } else {
@@ -195,13 +214,14 @@ final class TabsView: NSView {
         pr.dragged = true
         let id = list[pr.i].id
         // pulled clearly off the strip: it becomes its own window again
-        if p.y < -18 || p.y > bounds.height + 18 || p.x < -30 || p.x > bounds.width + 30 {
+        let m: CGFloat = 24
+        if p.y < -m || p.y > bounds.height + m || p.x < -m || p.x > bounds.width + m {
             press = nil
             hover = nil
             onTear?(id)
             return
         }
-        let j = index(at: p.x)
+        let j = index(at: p)
         if j != pr.i {
             onMove?(id, j)
             pr.i = j

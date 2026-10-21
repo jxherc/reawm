@@ -24,6 +24,16 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(gs.join(3, onto: 1, at: 0)?.wins, [3, 1, 2])
     }
 
+    func testJoinWithoutSelectKeepsShownTab() {
+        let gs = Groups()
+        let g = gs.join(2, onto: 1, select: false)
+        XCTAssertEqual(g?.wins, [1, 2])
+        XCTAssertEqual(g?.active, 1)
+        gs.join(3, onto: 1, select: false)
+        XCTAssertEqual(g?.active, 1)
+        XCTAssertEqual(g?.wins, [1, 2, 3])
+    }
+
     func testJoinSelfIsNothing() {
         let gs = Groups()
         XCTAssertNil(gs.join(1, onto: 1))

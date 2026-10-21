@@ -52,11 +52,11 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             m.addItem(.separator())
         }
         let next = entry("Next Tab", #selector(cmd(_:)), "next")
-        next.keyEquivalent = "]"
-        next.keyEquivalentModifierMask = [.control, .option]
+        next.keyEquivalent = "\t"
+        next.keyEquivalentModifierMask = [.option]
         let prev = entry("Previous Tab", #selector(cmd(_:)), "prev")
-        prev.keyEquivalent = "["
-        prev.keyEquivalentModifierMask = [.control, .option]
+        prev.keyEquivalent = "\t"
+        prev.keyEquivalentModifierMask = [.option, .shift]
         m.addItem(next)
         m.addItem(prev)
         m.addItem(.separator())
@@ -65,9 +65,24 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let ex = Settings.excluded.contains(b)
             m.addItem(entry(ex ? "Allow Tabs for \(app.localizedName ?? b)" : "No Tabs for \(app.localizedName ?? b)", #selector(exclude(_:)), b))
         }
-        let ungroup = entry("Ungroup All Windows", #selector(cmd(_:)), "ungroup")
-        ungroup.isEnabled = !wm.groups.all.isEmpty
-        m.addItem(ungroup)
+        let sides = NSMenu()
+        for side in Settings.Side.allCases {
+            let i = entry(side.rawValue.capitalized, #selector(setSide(_:)), side.rawValue)
+            i.state = Settings.side == side ? .on : .off
+            sides.addItem(i)
+        }
+        let si = NSMenuItem(title: "Tab Bar", action: nil, keyEquivalent: "")
+        si.submenu = sides
+        m.addItem(si)
+        let auto = entry("Tab Every Window", #selector(cmd(_:)), "auto")
+        auto.state = Settings.autoTab ? .on : .off
+        m.addItem(auto)
+        // with every window tabbed, ungrouping would just tab them again
+        if !Settings.autoTab {
+            let ungroup = entry("Ungroup All Windows", #selector(cmd(_:)), "ungroup")
+            ungroup.isEnabled = !wm.groups.all.isEmpty
+            m.addItem(ungroup)
+        }
         m.addItem(entry(Settings.paused ? "Resume" : "Pause", #selector(cmd(_:)), Settings.paused ? "resume" : "pause"))
         m.addItem(.separator())
         m.addItem(entry("Quit reawm", #selector(quit), key: "q"))
@@ -82,6 +97,9 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func cmd(_ i: NSMenuItem) { if let c = i.representedObject as? String { wm.command(c) } }
     @objc func grant() { Access.ask() }
+    @objc func setSide(_ i: NSMenuItem) {
+        if let r = i.representedObject as? String, let side = Settings.Side(rawValue: r) { wm.setSide(side) }
+    }
     @objc func quit() { NSApp.terminate(nil) }
 
     @objc func exclude(_ i: NSMenuItem) {
@@ -89,6 +107,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         var ex = Settings.excluded
         if ex.contains(b) { ex.remove(b) } else { ex.insert(b) }
         Settings.excluded = ex
+        if ex.contains(b) { wm.release(bundle: b) } else { wm.adoptAll() }
     }
 }
 
