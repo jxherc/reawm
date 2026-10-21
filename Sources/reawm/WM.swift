@@ -10,6 +10,7 @@ final class WM {
     let keys = Hotkeys()
     var groups = Groups()
     var onChange: (() -> Void)?
+    var menuBarLook: () -> NSAppearance? = { nil }   // what macOS draws the menu bar's text with
 
     private var strips: [UUID: Strip] = [:]
     private var frames: [UUID: CGRect] = [:]   // each group's frame, for when its shown window is gone
@@ -158,13 +159,11 @@ final class WM {
         case .appeared:
             adoptSoon(w)
         case .created:
-            // a window that just opened floats on top at its own size, like normal macOS.
-            // drag it onto a bar to make it a tab.
+            // a window that just opened joins its display's bar as the shown tab if it can
+            // take any size. settings panes and fixed-size windows float on top instead.
             guard ready else { adoptSoon(w); return }
             if let partner = returnTo.removeValue(forKey: w.id) { rejoin(w, partner); return }
-            loose.insert(w.id)
-            note("new window \(w.id) (\(w.app?.localizedName ?? "?")) floats")
-            changed()
+            adoptSoon(w, orFloat: true)
         }
     }
 
@@ -366,7 +365,7 @@ final class WM {
             return Tab(id: w.id, title: t.isEmpty ? (w.app?.localizedName ?? "") : t, icon: icon(w.pid), active: w.id == g.active)
         }
         let s = strips[g.id] ?? makeStrip(g)
-        s.show(stripRect(f), tabs, above: a.id)
+        s.show(stripRect(f), tabs, above: a.id, look: menuBarLook())
     }
 
     // the shown window moved or resized: move the strip along. the window can't
@@ -966,14 +965,24 @@ final class WM {
     }
 
     func eligible(_ w: Win) -> Bool {
-        w.resizable && !Settings.excluded.contains(w.bundle) && !loose.contains(w.id) && !unfit.contains(w.id) && groups.group(of: w.id) == nil
+        w.dynamic && !Settings.excluded.contains(w.bundle) && !loose.contains(w.id) && !unfit.contains(w.id) && groups.group(of: w.id) == nil
             && !w.minimized && !w.fullscreen && isOnScreen(w.id) && (w.frame.map(visible) ?? false)
     }
 
     // new windows settle their size and spot first
-    func adoptSoon(_ w: Win) {
+    // new windows settle their size, spot and buttons first, so look a few times.
+    // orFloat: if it never qualifies, it's a floating window from then on.
+    func adoptSoon(_ w: Win, orFloat: Bool = false, tries: Int = 4) {
         guard ready else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.adopt(w) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + (tries == 4 ? 0.1 : 0.3)) { [weak self] in
+            guard let self, tracker.wins[w.id] != nil, groups.group(of: w.id) == nil else { return }
+            if eligible(w) { adopt(w); return }
+            if tries > 1 { adoptSoon(w, orFloat: orFloat, tries: tries - 1); return }
+            guard orFloat, !loose.contains(w.id) else { return }
+            loose.insert(w.id)
+            note("new window \(w.id) (\(w.app?.localizedName ?? "?")) floats")
+            changed()
+        }
     }
 
     // a new window opens as the shown tab of its display's bar
@@ -981,11 +990,19 @@ final class WM {
         guard Settings.autoTab, !Settings.paused, ready, tear == nil, !windowDrag, tracker.wins[w.id] != nil,
               eligible(w), let f = w.frame, let d = Display.at(CGPoint(x: f.midX, y: f.midY)) else { return }
         guard let g = home(homeKey(d)) else { adoptAll(); return }
-        note("new window \(w.id) (\(w.app?.localizedName ?? "?")) joins the bar")
+        // a window its app opened in the background joins as a hidden tab, like a browser
+        // tab opened in the background, instead of taking over the bar
+        let front = NSWorkspace.shared.frontmostApplication?.processIdentifier == w.pid
+        note("new window \(w.id) (\(w.app?.localizedName ?? "?")) joins the bar\(front ? "" : " behind the shown tab")")
         remember(w)
-        cameFrom[g.id] = g.active
-        groups.join(w.id, onto: g.active)
+        if front { cameFrom[g.id] = g.active }
+        groups.join(w.id, onto: g.active, select: front)
+        quietUntil = Date().addingTimeInterval(0.35)
         show(g, at: frames[g.id])
+        if !front, let f = frames[g.id] {
+            var sz = f.size   // so it's ready to show, and the size check below has something to check
+            if let v = AXValueCreate(.cgSize, &sz) { w.el.set(kAXSizeAttribute, v) }
+        }
         checkFitSoon([w.id], g)
         changed()
     }

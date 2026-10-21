@@ -111,6 +111,14 @@ final class Win {
         return settable.boolValue
     }
 
+    // a window that can go full screen takes any size. settings panes and fixed tool
+    // windows have no (or a disabled) full screen button, so they stay out of bars.
+    var dynamic: Bool {
+        guard resizable, let b: AXUIElement = el.get(kAXFullScreenButtonAttribute) else { return false }
+        let on: Bool? = b.get(kAXEnabledAttribute)
+        return on ?? false
+    }
+
     var sizeSettable: Bool {
         var settable: DarwinBoolean = false
         AXUIElementIsAttributeSettable(el, kAXSizeAttribute as CFString, &settable)

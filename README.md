@@ -2,7 +2,7 @@
 
 macOS menu bar app that turns your windows into browser-style tabs.
 
-the windows on a display share one tab bar. one window shows at a time, filling the space under the bar, while the rest wait out of sight until you pick their tab. new windows still open on top the normal way; drag one onto the bar when you want it in there too.
+the windows on a display share one tab bar. one window shows at a time, filling the space under the bar, while the rest wait out of sight until you pick their tab. a new window joins the bar as the shown tab, or quietly behind it when its app opened it in the background. the bar has no background of its own, so it reads like a second row of the menu bar.
 
 ## using it
 
@@ -28,7 +28,7 @@ the menu bar icon has the rest: the bar on the top, left or right, a switch for 
 
 macOS can't hide a single window of an app, so reawm moves hidden tabs past the bottom corner of the screen with one point left showing. quitting or pausing puts every window back where it was before it joined a bar.
 
-windows that can't be resized, System Settings for example, stay out of the bars.
+windows that can't go full screen, like System Settings or Calculator, stay out of the bars and open on top the normal way. you can still drag a resizable one onto a bar yourself.
 
 ## build
 

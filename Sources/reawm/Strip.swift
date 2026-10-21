@@ -8,12 +8,11 @@ struct Tab {
     let active: Bool
 }
 
-// the browser-style tab bar floating just above a group's window. it's its own
-// rounded piece: a square edge against the window's rounded corners never lines up.
-// solid, not see-through: tab titles have to read the same over any window.
+// the browser-style tab bar floating just above a group's window. it looks like a
+// second row of the menu bar: no background of its own, just the wallpaper, with text
+// in whichever colour macOS picked for the menu bar over that wallpaper.
 final class Strip: NSPanel {
     let tabs = TabsView(frame: .zero)
-    private let bar = Bar()
 
     init() {
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -25,16 +24,16 @@ final class Strip: NSPanel {
         isReleasedWhenClosed = false
         acceptsMouseMovedEvents = true
         collectionBehavior = [.ignoresCycle, .fullScreenNone]
-        contentView = bar
-        tabs.autoresizingMask = [.width, .height]
-        bar.addSubview(tabs)
+        contentView = tabs
     }
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
     // r is in global top-left coords. the strip sits right above window `above`.
-    func show(_ r: CGRect, _ list: [Tab], above: WinID) {
+    // look: the menu bar's appearance, so the text matches it.
+    func show(_ r: CGRect, _ list: [Tab], above: WinID, look: NSAppearance?) {
+        if let look, appearance?.name != look.name { appearance = look }
         move(r)
         tabs.vertical = Settings.side != .top
         tabs.set(list)
@@ -45,33 +44,7 @@ final class Strip: NSPanel {
     func move(_ r: CGRect) {
         let f = Display.toAppKit(r)
         guard frame != f else { return }
-        if frame.size == f.size {
-            setFrameOrigin(f.origin)
-        } else {
-            setFrame(f, display: true)
-            tabs.frame = bar.bounds
-        }
-    }
-}
-
-// window-chrome colour with the faint rim macOS windows have
-final class Bar: NSView {
-    static let radius: CGFloat = 10
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        wantsLayer = true
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    override var wantsUpdateLayer: Bool { true }
-
-    override func updateLayer() {
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        layer?.cornerRadius = Self.radius
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        layer?.borderWidth = 1
-        layer?.borderColor = (dark ? NSColor(white: 1, alpha: 0.1) : NSColor(white: 0, alpha: 0.12)).cgColor
+        if frame.size == f.size { setFrameOrigin(f.origin) } else { setFrame(f, display: true) }
     }
 }
 
@@ -166,6 +139,9 @@ final class TabsView: NSView {
     }
 
     override func draw(_ dirty: NSRect) {
+        // all but invisible: fully clear pixels would let clicks fall through to the desktop
+        NSColor(white: 0.5, alpha: 0.02).setFill()
+        bounds.fill()
         let n = list.count
         for (i, t) in list.enumerated() {
             let r = rect(i)
@@ -184,12 +160,12 @@ final class TabsView: NSView {
             var room = chip.insetBy(dx: 10, dy: 0)
             if showClose { room.size.width -= 16 }
             if showClose, !vertical { room = chip.insetBy(dx: 26, dy: 0) }
-            let font = NSFont.systemFont(ofSize: 12, weight: t.active ? .medium : .regular)
+            let font = NSFont.systemFont(ofSize: 13, weight: t.active ? .medium : .regular)   // the menu bar's size
             let para = NSMutableParagraphStyle()
             para.lineBreakMode = .byTruncatingTail
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: font,
-                .foregroundColor: t.active ? NSColor.labelColor : NSColor.secondaryLabelColor,
+                .foregroundColor: t.active ? NSColor.labelColor : NSColor.labelColor.withAlphaComponent(0.72),
                 .paragraphStyle: para,
             ]
             let title = t.title.isEmpty ? " " : t.title
@@ -198,7 +174,7 @@ final class TabsView: NSView {
             // centred in a top bar, left-aligned down a sidebar
             let x = vertical ? room.minX : room.midX - total / 2
             t.icon.draw(in: NSRect(x: x, y: r.midY - 8, width: 16, height: 16), from: .zero, operation: .sourceOver,
-                        fraction: t.active ? 1 : 0.75, respectFlipped: true, hints: nil)
+                        fraction: t.active ? 1 : 0.85, respectFlipped: true, hints: nil)
             let th = font.ascender - font.descender
             (title as NSString).draw(in: NSRect(x: x + 22, y: r.midY - th / 2 - 1, width: tw, height: th + 2), withAttributes: attrs)
 
@@ -211,7 +187,7 @@ final class TabsView: NSView {
                 let x = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close tab")?
                     .withSymbolConfiguration(.init(pointSize: 9, weight: .bold))
                 if let x {
-                    let tinted = x.tinted(.secondaryLabelColor)
+                    let tinted = x.tinted(NSColor.labelColor.withAlphaComponent(0.72))
                     tinted.draw(in: NSRect(x: c.midX - tinted.size.width / 2, y: c.midY - tinted.size.height / 2,
                                            width: tinted.size.width, height: tinted.size.height),
                                 from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)

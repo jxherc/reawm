@@ -17,6 +17,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         item.menu = menu
         wm.onChange = { [weak self] in self?.item.button?.appearsDisabled = Settings.paused }
+        wm.menuBarLook = { [weak self] in self?.item.button?.effectiveAppearance }
 
         if Access.trusted {
             wm.start()
