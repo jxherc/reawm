@@ -86,9 +86,50 @@ final class TabsView: NSView {
     private var hover: Int?
     private var press: (i: Int, at: NSPoint, dragged: Bool)?
     private var closing: Int?
+    private var spring: (i: Int, timer: Timer)?
 
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for e: NSEvent?) -> Bool { true }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        // anything being dragged, so hovering it over a tab can open that tab
+        var types: [NSPasteboard.PasteboardType] = [.fileURL, .URL, .string, .rtf, .html, .png, .tiff, .pdf, .color]
+        types += NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) }
+        registerForDraggedTypes(types)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    // drag something over a tab and hold: that tab opens, so you can drop into it.
+    // the bar itself takes no drops.
+    override func draggingEntered(_ s: NSDraggingInfo) -> NSDragOperation { springLoad(s); return [] }
+    override func draggingUpdated(_ s: NSDraggingInfo) -> NSDragOperation { springLoad(s); return [] }
+    override func draggingExited(_ s: NSDraggingInfo?) { unspring() }
+    override func draggingEnded(_ s: NSDraggingInfo) { unspring() }
+
+    private func springLoad(_ s: NSDraggingInfo) {
+        guard !list.isEmpty else { return }
+        let i = index(at: convert(s.draggingLocation, from: nil))
+        if hover != i { hover = i; needsDisplay = true }
+        guard spring?.i != i else { return }
+        spring?.timer.invalidate()
+        let t = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.springOpen(i) }
+        }
+        spring = (i, t)
+    }
+
+    private func springOpen(_ i: Int) {
+        guard i < list.count, !list[i].active else { return }
+        onPick?(list[i].id)
+    }
+
+    private func unspring() {
+        spring?.timer.invalidate()
+        spring = nil
+        hover = nil
+        needsDisplay = true
+    }
 
     func set(_ l: [Tab]) {
         list = l

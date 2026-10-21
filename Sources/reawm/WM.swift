@@ -45,6 +45,10 @@ final class WM {
         var edges: Set<Settings.Side> = []   // which edges a resize is dragging
     }
 
+    // a window being moved or resized by hand. a press that drags content out of a
+    // window (a file, some text) isn't one, and switching tabs mid-drag must still work.
+    var windowDrag: Bool { grab.map { $0.moving || $0.resizing } ?? false }
+
     // a tab pulled off its strip, following the mouse
     struct Tear {
         var win: Win
@@ -171,7 +175,7 @@ final class WM {
 
     // bring the front app's window into view
     func follow(app pid: pid_t) {
-        guard !Settings.paused, tear == nil, grab == nil, Date() >= quietUntil,
+        guard !Settings.paused, tear == nil, !windowDrag, Date() >= quietUntil,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return }
         let el: AXUIElement? = AXUIElementCreateApplication(pid).get(kAXFocusedWindowAttribute)
         var w = el.flatMap { tracker.win(for: $0, pid: pid) }
@@ -282,7 +286,7 @@ final class WM {
     func clampSoon(_ w: Win) {
         clampWork[w.id]?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            guard let self, grab == nil, groups.group(of: w.id)?.active == w.id, !w.fullscreen, let f = w.frame else { return }
+            guard let self, !windowDrag, groups.group(of: w.id)?.active == w.id, !w.fullscreen, let f = w.frame else { return }
             let r = roomy(f)
             guard r != f else { return }
             note("pushed \(w.id) back under the bar")
@@ -431,7 +435,7 @@ final class WM {
             grab = nil
             if let t = endAim() {
                 join(g.win, t)
-            } else if let gr = groups.group(of: g.win.id), gr.active == g.win.id, let f = g.win.frame, f != g.start {
+            } else if g.moving || g.resizing, let gr = groups.group(of: g.win.id), gr.active == g.win.id, let f = g.win.frame, f != g.start {
                 if roomy(f) != f {
                     show(gr, at: roomy(f))
                 } else {
@@ -801,7 +805,7 @@ final class WM {
 
     // a new window opens as the shown tab of its display's bar
     func adopt(_ w: Win) {
-        guard Settings.autoTab, !Settings.paused, ready, tear == nil, grab == nil, tracker.wins[w.id] != nil,
+        guard Settings.autoTab, !Settings.paused, ready, tear == nil, !windowDrag, tracker.wins[w.id] != nil,
               eligible(w), let f = w.frame, let d = Display.at(CGPoint(x: f.midX, y: f.midY)) else { return }
         guard let g = home(homeKey(d)) else { adoptAll(); return }
         note("new window \(w.id) (\(w.app?.localizedName ?? "?")) joins the bar")
@@ -815,7 +819,7 @@ final class WM {
 
     // every window on screen joins its display's bar. whatever is in front stays shown.
     func adoptAll() {
-        guard Settings.autoTab, !Settings.paused, ready, tear == nil, grab == nil else { return }
+        guard Settings.autoTab, !Settings.paused, ready, tear == nil, !windowDrag else { return }
         guard let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return }
         let order = info.compactMap { d -> Win? in
             guard (d[kCGWindowLayer as String] as? Int) == 0, let id = d[kCGWindowNumber as String] as? WinID else { return nil }
