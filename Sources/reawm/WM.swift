@@ -700,12 +700,33 @@ final class WM {
                 let i = n == 9 ? g.wins.count : n
                 if i <= g.wins.count { switchTo(g.wins[i - 1], in: g) }
             }
+        case "put":
+            if let n, n >= 1, let w = focusedWin() { put(w, at: n) }
         case "ungroup": ungroupAll()
         case "auto": setAuto(!Settings.autoTab)
         case "pause": setPaused(true)
         case "resume": setPaused(false)
         default: NSLog("reawm: unknown command \(c)")
         }
+    }
+
+    // ⌥⌘1-9: move a tab to that spot in its bar (9 is the end). a floating window
+    // joins its display's bar there and shows.
+    func put(_ w: Win, at n: Int) {
+        if let g = groups.group(of: w.id) {
+            groups.move(w.id, to: n == 9 ? g.wins.count - 1 : n - 1)
+            note("moved \(w.id) to tab \(n)")
+            glue(g)
+            changed()
+            return
+        }
+        guard w.resizable, !Settings.excluded.contains(w.bundle), let f = w.frame,
+              let d = Display.at(CGPoint(x: f.midX, y: f.midY)),
+              let g = home(homeKey(d)) ?? currentGroup() else { return }
+        loose.remove(w.id)
+        unfit.remove(w.id)
+        note("put \(w.id) (\(w.app?.localizedName ?? "?")) into the bar at \(n)")
+        join(w, Target(win: g.active, index: n == 9 ? nil : n - 1, rect: .zero))
     }
 
     // the bar of the focused window, else the bar on the display with the mouse
@@ -791,6 +812,7 @@ final class WM {
         keys.add(48, Hotkeys.optShift) { [weak self] in self?.command("prev") }          // ⌥⇧⇥
         for (i, k) in Hotkeys.digits.enumerated() {
             keys.add(k, Hotkeys.opt) { [weak self] in self?.command("tab", n: i + 1) }
+            keys.add(k, Hotkeys.optCmd) { [weak self] in self?.command("put", n: i + 1) }
         }
     }
 
