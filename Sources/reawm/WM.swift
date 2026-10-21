@@ -363,7 +363,7 @@ final class WM {
     // put g's strip on top of its shown window, with fresh titles
     func glue(_ g: Group) {
         guard !Settings.paused, let a = tracker.wins[g.active], !parked.contains(a.id), !a.minimized, !a.fullscreen,
-              let f = a.frame, isOnScreen(a.id) else {
+              let f = a.frame, !covers(f), isOnScreen(a.id) else {
             strips[g.id]?.orderOut(nil)
             return
         }
@@ -380,7 +380,12 @@ final class WM {
     // move is fixed when it's let go instead, pushing mid-drag fights the drag.
     func follow(_ g: Group) {
         if let gr = grab, gr.moving, gr.win.id == g.active { return }   // the drag moves it, from the pointer
-        guard let s = strips[g.id], s.isVisible, let a = tracker.wins[g.active], !parked.contains(a.id), let f = a.frame else { return }
+        guard let s = strips[g.id], let a = tracker.wins[g.active], !parked.contains(a.id), let f = a.frame else { return }
+        if covers(f) || a.fullscreen {
+            s.orderOut(nil)
+            return
+        }
+        guard s.isVisible else { return }
         s.move(stripRect(f))
         if roomy(f) != f { clampSoon(a) }
     }
@@ -391,7 +396,7 @@ final class WM {
     func clampSoon(_ w: Win) {
         clampWork[w.id]?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            guard let self, !windowDrag, groups.group(of: w.id)?.active == w.id, !w.fullscreen, let f = w.frame else { return }
+            guard let self, !windowDrag, groups.group(of: w.id)?.active == w.id, !w.fullscreen, let f = w.frame, !covers(f) else { return }
             let r = roomy(f)
             guard r != f else { return }
             note("pushed \(w.id) back under the bar")
@@ -426,6 +431,12 @@ final class WM {
                 // the other tabs' slivers are still on screen, so this is the bar's Space
                 // and its shown window really went away
                 if !parked.contains(g.active), g.hidden.contains(where: { live[$0] != nil }) { vanished(g) }
+                continue
+            }
+            // a full screen window (a video, say) owns the whole display: no bar on it, and
+            // ordering the bar above it would pull the bar into its full screen Space
+            if covers(r) {
+                strips[g.id]?.orderOut(nil)
                 continue
             }
             if let h = g.hidden.first(where: { live[$0].map(visible) ?? false }) {
@@ -787,6 +798,12 @@ final class WM {
             show(g, at: roomy(f))
         }
         onChange?()
+    }
+
+    // a window filling a whole display: full screen, or a player that covers the screen
+    // without macOS's full screen
+    func covers(_ r: CGRect) -> Bool {
+        Display.all.contains { r.insetBy(dx: -1, dy: -1).contains($0.frame) }
     }
 
     // mostly on some display (a window left parked by a crash isn't)
