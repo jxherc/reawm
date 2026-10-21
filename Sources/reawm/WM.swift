@@ -89,6 +89,10 @@ final class WM {
             guard let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
             MainActor.assumeIsolated { self?.hidden(app.processIdentifier) }
         }
+        nc.addObserver(forName: NSWorkspace.didUnhideApplicationNotification, object: nil, queue: .main) { [weak self] n in
+            guard let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+            MainActor.assumeIsolated { self?.unhidden(app.processIdentifier) }
+        }
         nc.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] n in
             guard let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
             MainActor.assumeIsolated { self?.activated(app.processIdentifier) }
@@ -210,14 +214,39 @@ final class WM {
     }
 
     // ⌘H on the app whose window is showing: show another tab instead of an empty frame
+    // some apps close their window by hiding the whole app (Discord does), the same as ⌘H.
+    // either way its tabs leave the bar like closed windows: the tab you came from shows,
+    // and they rejoin the same bar when the app is brought back.
     func hidden(_ pid: pid_t) {
         guard !Settings.paused else { return }
-        for g in groups.all where tracker.wins[g.active]?.pid == pid {
-            let ok = { [tracker] (id: WinID) in tracker.wins[id].map { !($0.app?.isHidden ?? true) } ?? false }
-            let back = cameFrom[g.id].flatMap { g.wins.contains($0) && ok($0) ? $0 : nil }
-            guard let to = back ?? g.wins.first(where: ok) else { continue }
-            note("app \(pid) hidden, showing \(to)")
-            switchTo(to, in: g, focus: false)
+        for g in Array(groups.all) {
+            let mine = g.wins.filter { tracker.wins[$0]?.pid == pid }
+            guard !mine.isEmpty else { continue }
+            if mine.contains(g.active) {
+                let ok = { [tracker] (id: WinID) in tracker.wins[id].map { $0.pid != pid && !($0.app?.isHidden ?? true) } ?? false }
+                let back = cameFrom[g.id].flatMap { g.wins.contains($0) && ok($0) ? $0 : nil }
+                if let to = back ?? g.wins.first(where: ok) {
+                    note("app \(pid) hidden, showing \(to)")
+                    switchTo(to, in: g, focus: false)
+                }
+            }
+            for id in mine {
+                groups.remove(id)
+                parked.remove(id)
+                if let partner = g.wins.first { returnTo[id] = partner }
+            }
+            note("app \(pid) hidden, its \(mine.count) tab(s) leave the bar")
+            settle(g, shownLeft: false)
+        }
+    }
+
+    // the app is back: its windows rejoin the bars they left
+    func unhidden(_ pid: pid_t) {
+        guard !Settings.paused else { return }
+        for (id, partner) in returnTo {
+            guard let w = tracker.wins[id], w.pid == pid else { continue }
+            returnTo[id] = nil
+            rejoin(w, partner)
         }
     }
 
