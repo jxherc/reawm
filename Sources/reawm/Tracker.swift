@@ -79,7 +79,8 @@ final class Tracker {
     func look(_ pid: pid_t) {
         guard pid != getpid(), Date().timeIntervalSince(lastLook[pid] ?? .distantPast) > 3 else { return }
         lastLook[pid] = Date()
-        if observers[pid] == nil, let app = NSRunningApplication(processIdentifier: pid) { watch(app) } else { scan(pid) }
+        // a window we only notice now is one that just showed up, so it floats like any new window
+        if observers[pid] == nil, let app = NSRunningApplication(processIdentifier: pid) { watch(app, fresh: true) } else { scan(pid, fresh: true) }
     }
 
     @discardableResult

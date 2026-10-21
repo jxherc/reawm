@@ -31,6 +31,7 @@ final class WM {
     private var lastShown: [WinID: Date] = [:]
     private var unfit: Set<WinID> = []            // can't be resized freely; tried again after a restart
     private var accepted: [UUID: CGRect] = [:]    // what the shown window made of the group frame
+    private var returnTo: [WinID: WinID] = [:]    // a vanished tab -> a window of the bar it left
     private var seen: [UUID: (f: CGRect, since: Date)] = [:]   // shown window's frame and how long it's held
 
     private var cand: (t: Target, at: CGPoint)?
@@ -92,10 +93,15 @@ final class WM {
             guard let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
             MainActor.assumeIsolated { self?.activated(app.processIdentifier) }
         }
+        // displays plugged in or out: give macOS a moment to move windows first
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { MainActor.assumeIsolated { self?.displaysChanged() } }
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.glueAll() }
         }
         if !Settings.paused { groups.all.forEach { show($0, at: frames[$0.id]) } }
+        displaysChanged()   // the displays may not be the ones the bars were saved on
         ready = true
         adoptAll()
         changed()
@@ -112,6 +118,9 @@ final class WM {
             let shown = g.active == w.id
             groups.remove(w.id)
             settle(g, shownLeft: shown)
+            // apps that only hide a window on close make it look destroyed, but it still
+            // exists: if it shows up again it rejoins this bar
+            if exists(w.id), let partner = g.wins.first { returnTo[w.id] = partner }
         case .focused:
             // a hidden tab you reach some other way (⌘`, the Dock, Window menu) comes to the front
             guard tear == nil, let g = groups.group(of: w.id), w.frame != nil else { return }
@@ -131,25 +140,64 @@ final class WM {
         case .titled:
             if let g = groups.group(of: w.id) { glue(g) }
         case .minimized:
-            // a minimized tab leaves the bar (it comes back when un-minimized), and
-            // the tab you came from shows, or the frame would just be empty
-            guard let g = groups.group(of: w.id) else { return }
-            note("minimized \(w.id), leaves its bar")
-            let shown = g.active == w.id
-            groups.remove(w.id)
-            settle(g, shownLeft: shown)
+            // minimizing the shown tab minimizes the whole bar: the other tabs are tucked
+            // away already, so the bar just hides and comes back with that window
+            guard let g = groups.group(of: w.id), g.active == w.id else { return }
+            note("bar minimized with \(w.id)")
+            glue(g)
         case .unminimized:
-            if let g = groups.group(of: w.id) { if g.active == w.id { glue(g) } } else { adoptSoon(w) }
+            if let g = groups.group(of: w.id) {
+                if g.active == w.id { glue(g) } else { switchTo(w.id, in: g, focus: false) }
+            } else {
+                adoptSoon(w)
+            }
         case .appeared:
             adoptSoon(w)
         case .created:
             // a window that just opened floats on top at its own size, like normal macOS.
             // drag it onto a bar to make it a tab.
             guard ready else { adoptSoon(w); return }
+            if let partner = returnTo.removeValue(forKey: w.id) { rejoin(w, partner); return }
             loose.insert(w.id)
             note("new window \(w.id) (\(w.app?.localizedName ?? "?")) floats")
             changed()
         }
+    }
+
+    // displays came or went and macOS moved windows onto what's left. bars that end up
+    // on the same display and Space fold into one (the one in front keeps its shown tab),
+    // and a bar that no longer fits its screen takes the screen's size.
+    func displaysChanged() {
+        guard !Settings.paused else { return }
+        let live = onScreen()
+        var z: [WinID: Int] = [:]
+        if let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] {
+            for (i, d) in info.enumerated() { if let id = d[kCGWindowNumber as String] as? WinID { z[id] = i } }
+        }
+        var kept: [String: Group] = [:]
+        for g in groups.all.sorted(by: { (z[$0.active] ?? .max) < (z[$1.active] ?? .max) }) {
+            guard groups.all.contains(where: { $0 === g }), let f0 = live[g.active] ?? frames[g.id],
+                  let d = Display.at(CGPoint(x: f0.midX, y: f0.midY)) else { continue }
+            var f = frames[g.id] ?? f0
+            if !d.visible.insetBy(dx: -2, dy: -2).contains(f) { f = homeFrame(d) }
+            let k = homeKey(d)
+            if Settings.autoTab, let into = kept[k] {
+                note("bar \(g.id.uuidString.prefix(4)) folds into the bar on display \(d.uuid.prefix(4))")
+                for id in g.wins { groups.join(id, onto: into.active, select: false) }
+                strips[g.id]?.orderOut(nil)
+                strips[g.id] = nil
+                frames[g.id] = nil
+                show(into, at: frames[into.id])
+                continue
+            }
+            kept[k] = g
+            if Settings.autoTab {
+                homes = homes.filter { $0.value != g.id }
+                homes[k] = g.id
+            }
+            show(g, at: f)
+        }
+        changed()
     }
 
     func spaceChanged() {
@@ -254,7 +302,14 @@ final class WM {
             strips[g.id]?.orderOut(nil)
             strips[g.id] = nil
             frames[g.id] = nil
-            if let last = g.wins.first, let w = tracker.wins[last], parked.contains(last), let f { place(w, f) }
+            if let last = g.wins.first, let w = tracker.wins[last] {
+                if parked.contains(last), let f { place(w, f) }
+                // it's the only window left of that bar, so it gets the keyboard too
+                if shownLeft {
+                    quietUntil = Date().addingTimeInterval(0.35)
+                    w.focus()
+                }
+            }
         } else if shownLeft {
             // like a browser closing a tab you just opened: back to where you were.
             // it gets focus too, or the app may hand focus to a hidden tab and you'd type into nothing.
@@ -318,11 +373,15 @@ final class WM {
         guard !Settings.paused else { return }
         reap()
         let live = onScreen(unknown: { [tracker] in tracker.look($0) })
+        returned(live)
         for g in groups.all {
             if let t = tear, g.wins.contains(t.win.id) { continue }
             if let gr = grab, gr.moving, gr.win.id == g.active { continue }
             guard let r = live[g.active], !parked.contains(g.active) else {
                 strips[g.id]?.orderOut(nil)
+                // the other tabs' slivers are still on screen, so this is the bar's Space
+                // and its shown window really went away
+                if !parked.contains(g.active), g.hidden.contains(where: { live[$0] != nil }) { vanished(g) }
                 continue
             }
             if let h = g.hidden.first(where: { live[$0].map(visible) ?? false }) {
@@ -379,6 +438,47 @@ final class WM {
     }
 
     static let stripGap: CGFloat = 4
+
+    // closing a window in many apps (Discord, Music, chat apps) only hides it, so we
+    // never hear it closed. the shown tab disappearing without a minimize or ⌘H counts
+    // as closed: the tab you came from shows, and if the app brings that window back
+    // it rejoins this bar.
+    func vanished(_ g: Group) {
+        guard Date() >= quietUntil, tear == nil, !windowDrag, let a = tracker.wins[g.active],
+              !a.minimized, !a.fullscreen, !(a.app?.isHidden ?? false) else { return }
+        note("\(a.id) (\(a.app?.localizedName ?? "?")) went away, showing the tab before it")
+        groups.remove(a.id)
+        settle(g, shownLeft: true)
+        if let partner = g.wins.first { returnTo[a.id] = partner }
+    }
+
+    // a vanished tab's window is back on screen: it rejoins its bar as the shown tab
+    func returned(_ live: [WinID: CGRect]) {
+        for (id, partner) in returnTo {
+            guard let w = tracker.wins[id] else {
+                if !exists(id) { returnTo[id] = nil }   // really closed after all
+                continue
+            }
+            guard let r = live[id], visible(r), groups.group(of: id) == nil else { continue }
+            returnTo[id] = nil
+            rejoin(w, partner)
+        }
+    }
+
+    func rejoin(_ w: Win, _ partner: WinID) {
+        guard tracker.wins[partner] != nil else { return }
+        note("\(w.id) (\(w.app?.localizedName ?? "?")) came back, rejoins its bar")
+        let t = groups.group(of: partner)?.active ?? partner
+        join(w, Target(win: t, index: nil, rect: .zero))
+    }
+
+    // the window server still has this window, on screen or not
+    func exists(_ id: WinID) -> Bool {
+        let ptrs: [UnsafeRawPointer?] = [UnsafeRawPointer(bitPattern: Int(id))]
+        guard let arr = ptrs.withUnsafeBufferPointer({ CFArrayCreate(nil, UnsafeMutablePointer(mutating: $0.baseAddress), 1, nil) }),
+              let info = CGWindowListCreateDescriptionFromArray(arr) as? [[String: Any]] else { return false }
+        return !info.isEmpty
+    }
 
     func stripRect(_ f: CGRect) -> CGRect {
         let g = Self.stripGap, h = Settings.stripHeight, w = Settings.sideWidth
@@ -526,7 +626,10 @@ final class WM {
         remember(w)
         remember(tw)
         loose.remove(w.id)
+        let before = groups.group(of: t.win)
+        if let before, before.active != w.id { cameFrom[before.id] = before.active }
         guard let f0 = old ?? tw.frame, let g = groups.join(w.id, onto: t.win, at: t.index) else { return }
+        if before == nil { cameFrom[g.id] = t.win }
         show(g, at: roomy(f0))
         w.focus()
         checkFitSoon([w.id, tw.id], g)
