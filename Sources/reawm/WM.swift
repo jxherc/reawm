@@ -8,6 +8,7 @@ final class WM {
     let tracker = Tracker()
     let tap = Tap()
     let keys = Hotkeys()
+    let keyTap = KeyTap()
     var groups = Groups()
     var onChange: (() -> Void)?
     var menuBarLook: () -> NSAppearance? = { nil }   // what macOS draws the menu bar's text with
@@ -80,7 +81,12 @@ final class WM {
 
         if !tap.start() { NSLog("reawm: event tap failed, dragging windows into tabs is off") }
         tap.onMouse = { [weak self] t, p in self?.mouse(t, p) }
-        bindKeys()
+        if keyTap.start() {
+            keyTap.onKey = { [weak self] k, f, rep in self?.shortcut(k, f, rep) ?? false }
+        } else {
+            NSLog("reawm: key tap failed, falling back to Carbon hotkeys")
+            bindKeys()
+        }
 
         let nc = NSWorkspace.shared.notificationCenter
         nc.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -296,6 +302,7 @@ final class WM {
     }
 
     func switchTo(_ id: WinID, in g: Group, focus: Bool = true) {
+        lastGroup = g.id
         note("show \(id) (\(tracker.wins[id]?.app?.localizedName ?? "?")) was \(g.active)\(focus ? "" : ", following focus")")
         // frames[g.id] is kept up to date elsewhere. reading the old tab's frame here
         // could catch it mid close animation.
@@ -398,6 +405,7 @@ final class WM {
     // cheap pass for every group: follow moves, hide strips whose window went away
     // (other Space, app hidden, minimized). titles only change through glue().
     private var lastLook: NSAppearance.Name?
+    private var lastGroup: UUID?   // the bar you last switched in
 
     func glueAll() {
         guard !Settings.paused else { return }
@@ -840,7 +848,9 @@ final class WM {
                 if i <= g.wins.count { switchTo(g.wins[i - 1], in: g) }
             }
         case "put":
-            if let n, n >= 1, let w = focusedWin() { put(w, at: n) }
+            let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
+            let shown = currentGroup().flatMap { tracker.wins[$0.active] }.flatMap { $0.pid == front ? $0 : nil }
+            if let n, n >= 1, let w = focusedWin() ?? shown { put(w, at: n) }
         case "ungroup": ungroupAll()
         case "auto": setAuto(!Settings.autoTab)
         case "pause": setPaused(true)
@@ -868,15 +878,43 @@ final class WM {
         join(w, Target(win: g.active, index: n == 9 ? nil : n - 1, rect: .zero))
     }
 
-    // the bar of the focused window, else the bar on the display with the mouse
+    // which bar a shortcut means, worked out from the app in front and our own state.
+    // asking accessibility for the focused window is slow or empty in some apps
+    // (Claude, being Electron), which made shortcuts fall through.
     func currentGroup() -> Group? {
-        if let w = focusedWin(), let g = groups.group(of: w.id) { return g }
-        guard let d = Display.at(Display.mouse) else { return nil }
-        return home(homeKey(d))
+        let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        if let g = groups.all.first(where: { tracker.wins[$0.active]?.pid == pid }) { return g }
+        if let g = groups.all.first(where: { $0.wins.contains { tracker.wins[$0]?.pid == pid } }) { return g }
+        if let id = lastGroup, let g = groups.all.first(where: { $0.id == id }) { return g }
+        if let d = Display.at(Display.mouse), let g = home(homeKey(d)) { return g }
+        return groups.all.first
+    }
+
+    // the shortcuts, seen before any app gets the key. returns whether we took it.
+    func shortcut(_ k: Int, _ flags: CGEventFlags, _ rep: Bool) -> Bool {
+        guard !Settings.paused, !groups.all.isEmpty else { return false }
+        let mods = flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift])
+        let digit = Hotkeys.digits.firstIndex(of: k).map { $0 + 1 }
+        var c: (String, Int?)?
+        switch (mods, k) {
+        case ([.maskAlternate], 48): c = ("next", nil)                        // ⌥⇥
+        case ([.maskAlternate, .maskShift], 48): c = ("prev", nil)            // ⌥⇧⇥
+        case ([.maskControl, .maskAlternate], 30): c = ("next", nil)          // ⌃⌥]
+        case ([.maskControl, .maskAlternate], 33): c = ("prev", nil)          // ⌃⌥[
+        case ([.maskAlternate], _) where digit != nil: c = ("tab", digit)     // ⌥1-9
+        case ([.maskAlternate, .maskCommand], _) where digit != nil: c = ("put", digit)   // ⌥⌘1-9
+        default: return false
+        }
+        guard let (cmd, n) = c else { return false }
+        // holding ⌥⇥ keeps stepping; a held digit does it once
+        if rep && cmd != "next" && cmd != "prev" { return true }
+        DispatchQueue.main.async { [weak self] in self?.command(cmd, n: n) }
+        return true
     }
 
     func focusedWin() -> Win? {
         let sys = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(sys, 0.3)
         guard let app: AXUIElement = sys.get(kAXFocusedApplicationAttribute),
               let w: AXUIElement = app.get(kAXFocusedWindowAttribute), let id = w.winID else { return nil }
         return tracker.wins[id]

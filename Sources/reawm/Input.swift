@@ -35,6 +35,46 @@ private func tapCallback(_ proxy: CGEventTapProxy, _ type: CGEventType, _ e: CGE
     return Unmanaged.passUnretained(e)
 }
 
+// the tab shortcuts, caught before any app sees the key: some apps get keys ahead of
+// Carbon hotkeys, so those didn't fire everywhere. return true from onKey to take it.
+final class KeyTap {
+    var onKey: ((Int, CGEventFlags, Bool) -> Bool)?   // key code, modifiers, is a repeat
+    private var port: CFMachPort?
+    private var taken: Set<Int64> = []   // keys whose key-up we swallow too
+
+    func start() -> Bool {
+        let mask = (CGEventMask(1) << CGEventType.keyDown.rawValue) | (CGEventMask(1) << CGEventType.keyUp.rawValue)
+        let me = Unmanaged.passUnretained(self).toOpaque()
+        guard let port = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
+                                           eventsOfInterest: mask, callback: keyCallback, userInfo: me) else { return false }
+        self.port = port
+        CFRunLoopAddSource(CFRunLoopGetMain(), CFMachPortCreateRunLoopSource(nil, port, 0), .commonModes)
+        CGEvent.tapEnable(tap: port, enable: true)
+        return true
+    }
+
+    fileprivate func handle(_ type: CGEventType, _ e: CGEvent) -> Bool {
+        let k = e.getIntegerValueField(.keyboardEventKeycode)
+        switch type {
+        case .tapDisabledByTimeout, .tapDisabledByUserInput:
+            if let port { CGEvent.tapEnable(tap: port, enable: true) }
+        case .keyDown:
+            let rep = e.getIntegerValueField(.keyboardEventAutorepeat) != 0
+            if onKey?(Int(k), e.flags, rep) == true { taken.insert(k); return true }
+        case .keyUp:
+            if taken.remove(k) != nil { return true }
+        default:
+            break
+        }
+        return false
+    }
+}
+
+private func keyCallback(_ proxy: CGEventTapProxy, _ type: CGEventType, _ e: CGEvent, _ refcon: UnsafeMutableRawPointer?) -> Unmanaged<CGEvent>? {
+    guard let refcon else { return Unmanaged.passUnretained(e) }
+    return Unmanaged<KeyTap>.fromOpaque(refcon).takeUnretainedValue().handle(type, e) ? nil : Unmanaged.passUnretained(e)
+}
+
 // global shortcuts through Carbon, which needs no extra permission
 final class Hotkeys {
     private var actions: [UInt32: () -> Void] = [:]
