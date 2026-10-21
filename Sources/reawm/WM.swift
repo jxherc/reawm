@@ -142,6 +142,13 @@ final class WM {
             if let g = groups.group(of: w.id) { if g.active == w.id { glue(g) } } else { adoptSoon(w) }
         case .appeared:
             adoptSoon(w)
+        case .created:
+            // a window that just opened floats on top at its own size, like normal macOS.
+            // drag it onto a bar to make it a tab.
+            guard ready else { adoptSoon(w); return }
+            loose.insert(w.id)
+            note("new window \(w.id) (\(w.app?.localizedName ?? "?")) floats")
+            changed()
         }
     }
 
@@ -310,7 +317,7 @@ final class WM {
     func glueAll() {
         guard !Settings.paused else { return }
         reap()
-        let live = onScreen()
+        let live = onScreen(unknown: { [tracker] in tracker.look($0) })
         for g in groups.all {
             if let t = tear, g.wins.contains(t.win.id) { continue }
             if let gr = grab, gr.moving, gr.win.id == g.active { continue }
@@ -437,7 +444,7 @@ final class WM {
                 }
             }
             // a grouped window's title bar moves the whole group, it doesn't join anything
-            if g.moving, groups.group(of: g.win.id) == nil, !Settings.excluded.contains(g.win.bundle) {
+            if g.moving, g.win.resizable, groups.group(of: g.win.id) == nil, !Settings.excluded.contains(g.win.bundle) {
                 aim(p, dragging: g.win.id)
             }
             grab = g
@@ -473,7 +480,7 @@ final class WM {
                 return Target(win: g.active, index: min(slot, g.wins.count), rect: f.union(stripRect(f)))
             }
             // something else is on top here
-            guard let t = tracker.wins[id], !parked.contains(id), !Settings.excluded.contains(t.bundle),
+            guard let t = tracker.wins[id], t.resizable, !parked.contains(id), !Settings.excluded.contains(t.bundle),
                   p.y <= r.minY + Settings.titleBand else { return nil }
             return Target(win: id, index: nil, rect: r.union(stripRect(r)))
         }
@@ -655,12 +662,13 @@ final class WM {
         return d[kCGWindowIsOnscreen as String] as? Bool ?? false
     }
 
-    func onScreen() -> [WinID: CGRect] {
+    func onScreen(unknown: ((pid_t) -> Void)? = nil) -> [WinID: CGRect] {
         guard let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return [:] }
         var out: [WinID: CGRect] = [:]
         for d in info {
             guard (d[kCGWindowLayer as String] as? Int) == 0, let id = d[kCGWindowNumber as String] as? WinID, let r = bounds(d) else { continue }
             out[id] = r
+            if let unknown, tracker.wins[id] == nil, r.height > 60, let pid = d[kCGWindowOwnerPID as String] as? pid_t { unknown(pid) }
         }
         return out
     }
@@ -804,7 +812,7 @@ final class WM {
     }
 
     func eligible(_ w: Win) -> Bool {
-        !Settings.excluded.contains(w.bundle) && !loose.contains(w.id) && !unfit.contains(w.id) && groups.group(of: w.id) == nil
+        w.resizable && !Settings.excluded.contains(w.bundle) && !loose.contains(w.id) && !unfit.contains(w.id) && groups.group(of: w.id) == nil
             && !w.minimized && !w.fullscreen && isOnScreen(w.id) && (w.frame.map(visible) ?? false)
     }
 

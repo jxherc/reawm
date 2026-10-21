@@ -47,6 +47,8 @@ final class Win {
 
     // last frame we set, so our own moves don't look like user drags
     var placed: CGRect?
+    // fixed-size windows (WeChat, settings panes) can be moved but never tabbed
+    var resizable = true
 
     init(id: WinID, el: AXUIElement, pid: pid_t, bundle: String) {
         self.id = id
@@ -99,11 +101,17 @@ final class Win {
 
     func minimize() { el.set(kAXMinimizedAttribute, kCFBooleanTrue) }
 
-    // standard, resizable, user-facing windows only
+    // standard, user-facing windows we can at least move
     var manageable: Bool {
         let role: String? = el.get(kAXRoleAttribute)
         let sub: String? = el.get(kAXSubroleAttribute)
         guard role == kAXWindowRole, sub == kAXStandardWindowSubrole else { return false }
+        var settable: DarwinBoolean = false
+        AXUIElementIsAttributeSettable(el, kAXPositionAttribute as CFString, &settable)
+        return settable.boolValue
+    }
+
+    var sizeSettable: Bool {
         var settable: DarwinBoolean = false
         AXUIElementIsAttributeSettable(el, kAXSizeAttribute as CFString, &settable)
         return settable.boolValue

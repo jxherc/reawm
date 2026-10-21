@@ -3,7 +3,9 @@ import ApplicationServices
 import Core
 
 enum WinEvent {
-    case appeared, gone, moved, resized, minimized, unminimized, focused, titled
+    case appeared   // a window we just found that was already there
+    case created    // a window that opened while we were watching
+    case gone, moved, resized, minimized, unminimized, focused, titled
 }
 
 // keeps a live list of every manageable window through AX observers
@@ -19,16 +21,20 @@ final class Tracker {
         nc.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] n in
             guard let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
             // apps aren't ready for AX the moment they launch
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self?.watch(app) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self?.watch(app, fresh: true) }
         }
         nc.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] n in
             guard let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
             self?.unwatch(app.processIdentifier)
         }
         for app in NSWorkspace.shared.runningApplications { watch(app) }
+        live = true
     }
 
-    func watch(_ app: NSRunningApplication) {
+    private var live = false   // past the first look at every app
+
+    // fresh: the app just launched, so its windows are new ones
+    func watch(_ app: NSRunningApplication, fresh: Bool = false) {
         let pid = app.processIdentifier
         guard app.activationPolicy == .regular, pid != getpid(), observers[pid] == nil else { return }
         let el = AXUIElementCreateApplication(pid)
@@ -43,7 +49,7 @@ final class Tracker {
         CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(obs), .defaultMode)
         observers[pid] = obs
         appEls[pid] = el
-        scan(pid)
+        scan(pid, fresh: fresh)
     }
 
     func unwatch(_ pid: pid_t) {
@@ -58,22 +64,32 @@ final class Tracker {
     }
 
     // pick up windows we haven't seen (also used after a Space switch)
-    func scan(_ pid: pid_t) {
+    func scan(_ pid: pid_t, fresh: Bool = false) {
         guard let el = appEls[pid], let list: [AXUIElement] = el.get(kAXWindowsAttribute) else { return }
-        for w in list { add(w, pid: pid) }
+        for w in list { add(w, pid: pid, created: fresh) }
     }
 
     func rescan() {
         for pid in appEls.keys { scan(pid) }
     }
 
+    // a window on screen we don't know about: ask its app again. an app that was busy
+    // when we first looked can come back with no windows, and nothing tells us later.
+    private var lastLook: [pid_t: Date] = [:]
+    func look(_ pid: pid_t) {
+        guard pid != getpid(), Date().timeIntervalSince(lastLook[pid] ?? .distantPast) > 3 else { return }
+        lastLook[pid] = Date()
+        if observers[pid] == nil, let app = NSRunningApplication(processIdentifier: pid) { watch(app) } else { scan(pid) }
+    }
+
     @discardableResult
-    func add(_ el: AXUIElement, pid: pid_t) -> Win? {
+    func add(_ el: AXUIElement, pid: pid_t, created: Bool = false) -> Win? {
         guard let id = el.winID else { return nil }
         if let w = wins[id] { return w }
         let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
         let w = Win(id: id, el: el, pid: pid, bundle: bundle)
         guard w.manageable else { return nil }
+        w.resizable = w.sizeSettable
         wins[id] = w
         if let obs = observers[pid] {
             let me = Unmanaged.passUnretained(self).toOpaque()
@@ -82,7 +98,7 @@ final class Tracker {
                 AXObserverAddNotification(obs, el, n as CFString, me)
             }
         }
-        onEvent?(.appeared, w)
+        onEvent?(created ? .created : .appeared, w)
         return w
     }
 
@@ -103,10 +119,11 @@ final class Tracker {
         switch name {
         case kAXWindowCreatedNotification:
             // give the window a moment to settle its role and size
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in self?.add(el, pid: pid) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in self?.add(el, pid: pid, created: true) }
         case kAXFocusedWindowChangedNotification:
             // the element here is the newly focused window
-            if let w = win(for: el, pid: pid) ?? add(el, pid: pid) {
+            // a window we've never seen getting focus is almost always one that just opened
+            if let w = win(for: el, pid: pid) ?? add(el, pid: pid, created: live) {
                 onEvent?(.focused, w)
             }
         case kAXUIElementDestroyedNotification:
