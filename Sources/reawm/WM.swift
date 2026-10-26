@@ -135,7 +135,7 @@ final class WM {
             if exists(w.id), let partner = g.wins.first { returnTo[w.id] = partner }
         case .focused:
             // a hidden tab you reach some other way (⌘`, the Dock, Window menu) comes to the front
-            guard tear == nil, let g = groups.group(of: w.id), w.frame != nil else { return }
+            guard tear == nil, let g = groups.group(of: w.id), w.frame != nil, Spaces.showing(w.id) else { return }
             if g.active == w.id { glue(g); return }
             // only the app in front can pull its window forward: apps in the back re-report
             // focus when we move their windows, and following that flips tabs back and forth.
@@ -190,7 +190,7 @@ final class WM {
                   let d = Display.at(CGPoint(x: f0.midX, y: f0.midY)) else { continue }
             var f = frames[g.id] ?? f0
             if !d.visible.insetBy(dx: -2, dy: -2).contains(f) { f = homeFrame(d) }
-            let k = homeKey(d)
+            let k = homeKey(d, g.active)
             if Settings.autoTab, let into = kept[k] {
                 note("bar \(g.id.uuidString.prefix(4)) folds into the bar on display \(d.uuid.prefix(4))")
                 for id in g.wins { groups.join(id, onto: into.active, select: false) }
@@ -278,7 +278,8 @@ final class WM {
             w = groups.all.flatMap(\.wins).compactMap { tracker.wins[$0] }.filter { $0.pid == pid }
                 .max { (lastShown[$0.id] ?? .distantPast) < (lastShown[$1.id] ?? .distantPast) }
         }
-        guard let w, let g = groups.group(of: w.id), g.active != w.id else { return }
+        // an empty desktop makes Finder the front app: that's no reason to change a bar on another desktop
+        guard let w, let g = groups.group(of: w.id), g.active != w.id, Spaces.showing(w.id) else { return }
         switchTo(w.id, in: g, focus: false)
     }
 
@@ -1044,7 +1045,9 @@ final class WM {
 
     // MARK: every window, automatically
 
-    func homeKey(_ d: Display) -> String { "\(d.uuid)#\(Spaces.current(d))" }
+    // a bar belongs to the Space its windows are on, which isn't always the one in front
+    // (right after switching desktops, say)
+    func homeKey(_ d: Display, _ id: WinID? = nil) -> String { "\(d.uuid)#\(id.flatMap(Spaces.of) ?? Spaces.current(d))" }
 
     func home(_ k: String) -> Group? {
         homes[k].flatMap { id in groups.all.first { $0.id == id } }
@@ -1084,7 +1087,7 @@ final class WM {
     func adopt(_ w: Win) {
         guard Settings.autoTab, !Settings.paused, ready, tear == nil, !windowDrag, tracker.wins[w.id] != nil,
               eligible(w), let f = w.frame, let d = Display.at(CGPoint(x: f.midX, y: f.midY)) else { return }
-        guard let g = home(homeKey(d)) else { adoptAll(); return }
+        guard let g = home(homeKey(d, w.id)) else { adoptAll(); return }
         // a window its app opened in the background joins as a hidden tab, like a browser
         // tab opened in the background, instead of taking over the bar
         let front = NSWorkspace.shared.frontmostApplication?.processIdentifier == w.pid

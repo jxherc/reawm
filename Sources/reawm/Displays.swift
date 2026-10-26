@@ -57,4 +57,20 @@ enum Spaces {
         guard let mainConn, let currentSpace else { return 0 }
         return currentSpace(mainConn(), d.uuid as CFString)
     }
+
+    private typealias WindowSpaces = @convention(c) (Int32, Int32, CFArray) -> Unmanaged<CFArray>?
+    private static let windowSpaces: WindowSpaces? = sym("SLSCopySpacesForWindows")
+
+    // the Space a window lives on, nil when SkyLight won't say (minimized, hidden app)
+    static func of(_ id: CGWindowID) -> UInt64? {
+        guard let mainConn, let windowSpaces,
+              let a = windowSpaces(mainConn(), 7, [id] as CFArray)?.takeRetainedValue() as? [NSNumber] else { return nil }
+        return a.first?.uint64Value
+    }
+
+    // false for a window on a Space nobody is looking at right now
+    static func showing(_ id: CGWindowID) -> Bool {
+        guard let s = of(id) else { return true }
+        return Display.all.contains { current($0) == s }
+    }
 }
