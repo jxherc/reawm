@@ -67,6 +67,7 @@ final class TabsView: NSView {
     private var hover: Int?
     private var press: (i: Int, at: NSPoint, dragged: Bool)?
     private var closing: Int?
+    private var middle: Int?
     private var spring: (i: Int, timer: Timer)?
 
     override var isFlipped: Bool { true }
@@ -265,6 +266,19 @@ final class TabsView: NSView {
         }
         press = nil
         needsDisplay = true
+    }
+
+    // middle click closes a tab like in a browser: on release, over the tab it went down on
+    override func otherMouseDown(with e: NSEvent) {
+        guard e.buttonNumber == 2, !list.isEmpty else { return }
+        middle = index(at: convert(e.locationInWindow, from: nil))
+    }
+
+    override func otherMouseUp(with e: NSEvent) {
+        guard e.buttonNumber == 2, let m = middle else { return }
+        middle = nil
+        let p = convert(e.locationInWindow, from: nil)
+        if bounds.contains(p), index(at: p) == m, m < list.count { onClose?(list[m].id) }
     }
 }
 

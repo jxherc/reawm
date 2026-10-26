@@ -12,7 +12,7 @@ the windows on a display share one tab bar. one window shows at a time, filling 
 
 drag a window by its title bar onto another window's title bar (or onto a tab bar), hold still for a quarter second until the blue outline shows up, then let go. it's a tab now.
 
-on the bar, click a tab to show it, drag tabs sideways to reorder them, or drag one off the bar to pull that window back out. hover a tab for its ×. if you're dragging a file or some text, hold it over a tab for half a second and that tab opens so you can drop into it.
+on the bar, click a tab to show it, drag tabs sideways to reorder them, or drag one off the bar to pull that window back out. hover a tab for its ×, or middle-click it to close it like in a browser. if you're dragging a file or some text, hold it over a tab for half a second and that tab opens so you can drop into it.
 
 | keys | does |
 |---|---|
