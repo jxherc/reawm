@@ -575,9 +575,13 @@ final class WM {
         let s = Strip()
         s.tabs.onPick = { [weak self] id in self?.pick(id) }
         s.tabs.onClose = { [weak self] id in
-            // show it first so a "save changes?" sheet isn't stuck on a hidden window
-            self?.pick(id)
             self?.tracker.wins[id]?.close()
+            // still there a moment later: it's asking something ("save changes?"), so show
+            // it instead of leaving the sheet on a hidden window. showing it first flashed it.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                guard let self, groups.group(of: id) != nil, exists(id) else { return }
+                pick(id)
+            }
         }
         s.tabs.onMove = { [weak self] id, i in
             guard let self else { return }
