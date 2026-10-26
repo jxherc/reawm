@@ -40,7 +40,7 @@ macOS 没法只隐藏某个 app 的单个窗口，所以 reawm 会把隐藏的�
 ./scripts/bundle.sh
 ```
 
-需要 macOS 14 或更高版本，以及带 Swift 6 的 Xcode；脚本会用它找到的第一个 `/Applications/Xcode*.app`。它会构建出 `build/reawm.app`，如果你有 Apple Development 证书，就用它来签名，这样重新构建后 macOS 还会保留辅助功能权限。没有证书的话会用 ad hoc 签名，每次构建完你都得重新允许访问。
+需要 Xcode 26 或更高版本，用来编译 Liquid Glass 图标；脚本会用它找到的第一个 `/Applications/Xcode*.app`。app 本身在 macOS 14 或更高版本上就能运行；macOS 26 之前显示的是预先渲染好的图标。它会构建出 `build/reawm.app`，如果你有 Apple Development 证书，就用它来签名，这样重新构建后 macOS 还会保留辅助功能权限。没有证书的话会用 ad hoc 签名，每次构建完你都得重新允许访问。
 
 ## 安装
 

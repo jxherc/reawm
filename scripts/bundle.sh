@@ -10,6 +10,10 @@ app=build/reawm.app
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp .build/release/reawm "$app/Contents/MacOS/reawm"
+# the liquid glass icon for macOS 26 and later, plus an .icns for older systems.
+# absolute paths: actool hands off to a daemon that has its own working directory
+xcrun actool "$PWD/Resources/AppIcon.icon" --compile "$PWD/$app/Contents/Resources" --platform macosx \
+  --minimum-deployment-target 14.0 --app-icon AppIcon --output-partial-info-plist "$PWD/.build/icon.plist" >/dev/null
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -17,6 +21,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <dict>
   <key>CFBundleExecutable</key><string>reawm</string>
   <key>CFBundleIdentifier</key><string>com.jxherc.reawm</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundleIconName</key><string>AppIcon</string>
   <key>CFBundleName</key><string>reawm</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>

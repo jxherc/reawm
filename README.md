@@ -40,7 +40,7 @@ windows that can't go full screen, like System Settings or Calculator, stay out 
 ./scripts/bundle.sh
 ```
 
-needs macOS 14 or later and Xcode with Swift 6; the script uses the first `/Applications/Xcode*.app` it finds. it builds `build/reawm.app` and signs it with your Apple Development certificate if you have one, so macOS keeps the Accessibility permission between builds. without a certificate it signs ad hoc, and you'll have to allow access again after every build.
+needs Xcode 26 or later, which compiles the Liquid Glass icon; the script uses the first `/Applications/Xcode*.app` it finds. the app itself runs on macOS 14 or later; before macOS 26 it shows a pre-rendered copy of the icon. it builds `build/reawm.app` and signs it with your Apple Development certificate if you have one, so macOS keeps the Accessibility permission between builds. without a certificate it signs ad hoc, and you'll have to allow access again after every build.
 
 ## install
 

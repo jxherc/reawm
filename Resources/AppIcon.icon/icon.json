@@ -1,0 +1,46 @@
+{
+  "fill-specializations" : [
+    { "value" : { "automatic-gradient" : "display-p3:1.00000,0.42000,0.16000,1.00000" } },
+    { "appearance" : "dark", "value" : { "solid" : "display-p3:0.13000,0.08000,0.06500,1.00000" } }
+  ],
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "fill-specializations" : [
+            { "value" : { "automatic-gradient" : "srgb:1.00000,1.00000,1.00000,1.00000" } },
+            { "appearance" : "dark", "value" : { "automatic-gradient" : "display-p3:1.00000,0.45000,0.18000,1.00000" } },
+            { "appearance" : "tinted", "value" : "automatic" }
+          ],
+          "glass" : true,
+          "image-name" : "window.svg",
+          "name" : "window"
+        }
+      ],
+      "lighting" : "individual",
+      "shadow" : { "kind" : "neutral", "opacity" : 0.5 },
+      "specular" : true,
+      "translucency" : { "enabled" : true, "value" : 0.4 }
+    },
+    {
+      "layers" : [
+        {
+          "fill-specializations" : [
+            { "value" : { "automatic-gradient" : "srgb:1.00000,1.00000,1.00000,1.00000" } },
+            { "appearance" : "dark", "value" : { "automatic-gradient" : "display-p3:1.00000,0.45000,0.18000,1.00000" } },
+            { "appearance" : "tinted", "value" : "automatic" }
+          ],
+          "glass" : true,
+          "image-name" : "tabs.svg",
+          "name" : "tabs",
+          "opacity" : 0.6
+        }
+      ],
+      "lighting" : "individual",
+      "shadow" : { "kind" : "neutral", "opacity" : 0.3 },
+      "specular" : true,
+      "translucency" : { "enabled" : true, "value" : 0.5 }
+    }
+  ],
+  "supported-platforms" : { "squares" : [ "macOS" ] }
+}
