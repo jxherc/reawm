@@ -46,7 +46,11 @@ needs Xcode 26 or later, which compiles the Liquid Glass icon; the script uses t
 
 ## install
 
-copy `build/reawm.app` to `/Applications` and open it. it asks for Accessibility access (System Settings → Privacy & Security → Accessibility), which it needs to move other apps' windows, and it starts working the moment you allow it.
+grab the zip from the [latest release](https://github.com/jxherc/reawm/releases/latest), unzip it and drag `reawm.app` into `/Applications`. if you built it yourself, copy `build/reawm.app` there instead. it runs on Apple silicon Macs.
+
+the download isn't notarized, so macOS refuses to open it the first time. go to System Settings → Privacy & Security, scroll down to the line about reawm and click Open Anyway, or run `xattr -dr com.apple.quarantine /Applications/reawm.app` once.
+
+then it asks for Accessibility access (System Settings → Privacy & Security → Accessibility), which it needs to move other apps' windows, and it starts working the moment you allow it.
 
 ## scripting
 

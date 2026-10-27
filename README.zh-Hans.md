@@ -46,7 +46,11 @@ macOS 没法只隐藏某个 app 的单个窗口，所以 reawm 会把隐藏的�
 
 ## 安装
 
-把 `build/reawm.app` 拷到 `/Applications`，然后打开。它会请求辅助功能权限（系统设置 → 隐私与安全性 → 辅助功能），移动其他 app 的窗口需要这个权限。你一允许，它就马上开始工作。
+从[最新版本](https://github.com/jxherc/reawm/releases/latest)下载 zip，解压后把 `reawm.app` 拖进 `/Applications`。如果是自己构建的，就把 `build/reawm.app` 拷过去。它在 Apple 芯片的 Mac 上运行。
+
+下载的版本没有经过公证，所以第一次打开时 macOS 会拒绝。去系统设置 → 隐私与安全性，往下翻到关于 reawm 的那一行，点“仍要打开”；或者运行一次 `xattr -dr com.apple.quarantine /Applications/reawm.app`。
+
+然后它会请求辅助功能权限（系统设置 → 隐私与安全性 → 辅助功能），移动其他 app 的窗口需要这个权限。你一允许，它就马上开始工作。
 
 ## 脚本
 
