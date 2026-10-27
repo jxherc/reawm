@@ -1087,7 +1087,7 @@ final class WM {
         }
     }
 
-    // a new window opens as the shown tab of its display's bar
+    // a new window opens in its display's bar right after the shown tab, and takes over
     func adopt(_ w: Win) {
         guard Settings.autoTab, !Settings.paused, ready, tear == nil, !windowDrag, tracker.wins[w.id] != nil,
               eligible(w), let f = w.frame, let d = Display.at(CGPoint(x: f.midX, y: f.midY)) else { return }
@@ -1098,7 +1098,7 @@ final class WM {
         note("new window \(w.id) (\(w.app?.localizedName ?? "?")) joins the bar\(front ? "" : " behind the shown tab")")
         remember(w)
         if front { cameFrom[g.id] = g.active }
-        groups.join(w.id, onto: g.active, select: front)
+        groups.open(w.id, after: g.active, select: front)
         quietUntil = Date().addingTimeInterval(0.35)
         show(g, at: frames[g.id])
         if !front, let f = frames[g.id] {

@@ -45,6 +45,13 @@ public final class Groups: Codable {
         return g
     }
 
+    // a new window opens right after the tab it came from, like a browser tab
+    @discardableResult
+    public func open(_ w: WinID, after target: WinID, select: Bool = true) -> Group? {
+        let at = group(of: target)?.wins.firstIndex(of: target).map { $0 + 1 } ?? 1
+        return join(w, onto: target, at: at, select: select)
+    }
+
     // take w out of its group and return that group. a group left with one
     // window stops being a group (it's no longer in `all`). when the shown tab
     // leaves, the one to its right is shown, like a browser.

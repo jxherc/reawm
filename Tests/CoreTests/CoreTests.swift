@@ -34,6 +34,23 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(g?.wins, [1, 2, 3])
     }
 
+    func testOpenGoesRightAfterTheTarget() {
+        let gs = Groups()
+        gs.join(2, onto: 1)
+        gs.join(3, onto: 1)
+        let g = gs.open(4, after: 1)
+        XCTAssertEqual(g?.wins, [1, 4, 2, 3])
+        XCTAssertEqual(g?.active, 4)
+        gs.open(5, after: 3, select: false)
+        XCTAssertEqual(g?.wins, [1, 4, 2, 3, 5])
+        XCTAssertEqual(g?.active, 4)
+    }
+
+    func testOpenOntoALoneWindowMakesAPair() {
+        let gs = Groups()
+        XCTAssertEqual(gs.open(2, after: 1)?.wins, [1, 2])
+    }
+
     func testJoinSelfIsNothing() {
         let gs = Groups()
         XCTAssertNil(gs.join(1, onto: 1))

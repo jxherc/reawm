@@ -8,7 +8,7 @@ macOS menu bar app that turns your windows into browser-style tabs.
 
 ![reawm's tab bar switching between three windows](docs/demo.gif)
 
-the windows on a display share one tab bar. one window shows at a time, filling the space under the bar, while the rest wait out of sight until you pick their tab. a new window joins the bar as the shown tab, or quietly behind it when its app opened it in the background. the bar has no background of its own, so it reads like a second row of the menu bar.
+the windows on a display share one tab bar. one window shows at a time, filling the space under the bar, while the rest wait out of sight until you pick their tab. a new window joins the bar right after the tab you're on, as the shown tab, or quietly behind it when its app opened it in the background. the bar has no background of its own, so it reads like a second row of the menu bar.
 
 ## using it
 
