@@ -1,3 +1,5 @@
+<img src="docs/icon.png" width="128" alt="reawm 图标">
+
 # reawm
 
 [english](README.md)
