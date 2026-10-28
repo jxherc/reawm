@@ -35,6 +35,10 @@ final class WM {
     private var accepted: [UUID: CGRect] = [:]    // what the shown window made of the group frame
     private var returnTo: [WinID: WinID] = [:]    // a vanished tab -> a window of the bar it left
     private var seen: [UUID: (f: CGRect, since: Date)] = [:]   // shown window's frame and how long it's held
+    private var mcOpen = false
+    private var asleep = false
+    private var holdUntil = Date.distantPast
+    private var resumeWork: DispatchWorkItem?
 
     private var cand: (t: Target, at: CGPoint)?
     private var armed: Target?
@@ -106,12 +110,25 @@ final class WM {
             guard let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
             MainActor.assumeIsolated { self?.activated(app.processIdentifier) }
         }
-        // displays plugged in or out: give macOS a moment to move windows first
+        // displays plugged in or out, or waking: give macOS a moment to move windows first
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { MainActor.assumeIsolated { self?.displaysChanged() } }
+            MainActor.assumeIsolated { self?.hold(1) }
+        }
+        nc.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                note("displays asleep")
+                self?.asleep = true
+            }
+        }
+        nc.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                note("displays awake")
+                self?.asleep = false
+                self?.hold(2)
+            }
         }
         timer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.glueAll() }
+            MainActor.assumeIsolated { self?.tick() }
         }
         if !Settings.paused { groups.all.forEach { show($0, at: frames[$0.id]) } }
         displaysChanged()   // the displays may not be the ones the bars were saved on
@@ -124,6 +141,7 @@ final class WM {
 
     func event(_ e: WinEvent, _ w: Win) {
         guard !Settings.paused else { return }
+        if held && (e == .focused || e == .moved || e == .resized) { return }
         switch e {
         case .gone:
             parked.remove(w.id)
@@ -211,7 +229,62 @@ final class WM {
         changed()
     }
 
+    // macOS is moving windows around by itself: Mission Control is open, the displays
+    // sleep, or they're being set up again (waking, plugged in or out). none of that is
+    // the user's doing, so nothing gets tucked away, followed or refitted until it's over.
+    // tucking a window then only made macOS pull it back, again and again.
+    var held: Bool { mcOpen || asleep || Date() < holdUntil }
+
+    func hold(_ s: TimeInterval) {
+        holdUntil = max(holdUntil, Date().addingTimeInterval(s))
+        resumeWork?.cancel()
+        let w = DispatchWorkItem { [weak self] in
+            // still held: whatever ends it (Mission Control closing, the displays waking) holds again
+            guard let self, !held else { return }
+            resume()
+        }
+        resumeWork = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + holdUntil.timeIntervalSinceNow + 0.05, execute: w)
+    }
+
+    func tick() {
+        let mc = missionControl()
+        if mc != mcOpen {
+            mcOpen = mc
+            note("mission control \(mc ? "opened" : "closed")")
+            // let a window picked there land first
+            if !mc { hold(0.4) }
+        }
+        glueAll()
+    }
+
+    // Mission Control draws every window as a thumbnail, and the window server then lists
+    // each window where its thumbnail is: hidden tabs look like they're back on screen.
+    // a bar is always as thick as we made it, so one listed thinner means Mission Control
+    // is open. (the Dock's AXExpose notifications, which yabai listens to, never arrive
+    // on macOS 27.)
+    func missionControl() -> Bool {
+        let live = onScreen()
+        let top = Settings.side == .top
+        return strips.values.contains { s in
+            guard s.isVisible, let r = live[WinID(s.windowNumber)] else { return false }
+            return abs(top ? r.height - s.frame.height : r.width - s.frame.width) > 2
+        }
+    }
+
+    // after a hold: show what you picked meanwhile, and put every bar back the way it was
+    private func resume() {
+        guard !Settings.paused else { return }
+        note("macOS is done moving windows, putting the bars back")
+        tracker.rescan()
+        if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier { follow(app: pid) }
+        displaysChanged()
+        glueAll()
+        adoptAll()
+    }
+
     func spaceChanged() {
+        guard !held else { return }
         tracker.rescan()
         // groups on the Space we just came to get their hidden tabs tucked away again
         let live = onScreen()
@@ -260,7 +333,7 @@ final class WM {
     // switching apps doesn't change the app's focused window, so no AX event: ask it.
     // switchers like AltTab activate first and raise the window a moment later, so ask twice.
     func activated(_ pid: pid_t) {
-        guard !Settings.paused else { return }
+        guard !Settings.paused, !held else { return }
         follow(app: pid)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in self?.follow(app: pid) }
         glueAll()
@@ -268,7 +341,7 @@ final class WM {
 
     // bring the front app's window into view
     func follow(app pid: pid_t) {
-        guard !Settings.paused, tear == nil, !windowDrag, Date() >= quietUntil,
+        guard !Settings.paused, !held, tear == nil, !windowDrag, Date() >= quietUntil,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return }
         let el: AXUIElement? = AXUIElementCreateApplication(pid).get(kAXFocusedWindowAttribute)
         var w = el.flatMap { tracker.win(for: $0, pid: pid) }
@@ -328,9 +401,11 @@ final class WM {
     // from full screen. if its app is in front it's the one you want, so it gets the bar's
     // spot; otherwise it's tucked away again so nothing overlaps.
     func summoned(_ id: WinID, in g: Group, at f: CGRect?) {
-        // the window server lags a moment behind our own moves, so a fresh park can still look visible
+        // the window server lags a moment behind our own moves, so a fresh park can still look visible.
+        // App Exposé lists a window where its thumbnail is: only where the app says it is counts.
         guard tear == nil, let f, visible(f), Date() >= quietUntil, let w = tracker.wins[id], !w.fullscreen,
-              !parked.contains(id) || Date().timeIntervalSince(parkedAt[id] ?? .distantPast) > 1 else { return }
+              !parked.contains(id) || Date().timeIntervalSince(parkedAt[id] ?? .distantPast) > 1,
+              w.frame.map(visible) ?? false else { return }
         if NSWorkspace.shared.frontmostApplication?.processIdentifier == w.pid {
             note("hidden tab \(id) came back on screen, showing it")
             // at the bar's size: an app restores a window leaving full screen to a size of its own
@@ -428,7 +503,7 @@ final class WM {
     private var missingSince: [UUID: Date] = [:]   // when a bar's shown window left the screen
 
     func glueAll() {
-        guard !Settings.paused else { return }
+        guard !Settings.paused, !held else { return }
         let look = menuBarLook()
         if let look, look.name != lastLook {
             note("menu bar text is now \(look.name.rawValue)")
@@ -484,7 +559,13 @@ final class WM {
             if let ac = accepted[g.id], abs(ac.width - r.width) < 2, abs(ac.height - r.height) < 2 {
                 seen[g.id] = nil
             } else if let sn = seen[g.id], sn.f == r {
-                if Date().timeIntervalSince(sn.since) > 1 { frames[g.id] = r }
+                // App Exposé lists the window where its thumbnail is, holding still for as
+                // long as it's open: a size only counts if the app has the window at it too
+                if Date().timeIntervalSince(sn.since) > 1, let a = tracker.wins[g.active]?.frame,
+                   abs(a.width - r.width) < 2, abs(a.height - r.height) < 2 {
+                    frames[g.id] = r
+                    accepted[g.id] = r
+                }
             } else {
                 seen[g.id] = (r, Date())
             }
@@ -1155,6 +1236,7 @@ final class WM {
         guard ready else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + (tries == 4 ? 0.1 : 0.3)) { [weak self] in
             guard let self, tracker.wins[w.id] != nil, groups.group(of: w.id) == nil else { return }
+            if held { adoptSoon(w, orFloat: orFloat, tries: tries); return }
             if eligible(w) { adopt(w); return }
             if tries > 1 { adoptSoon(w, orFloat: orFloat, tries: tries - 1); return }
             // on a display with tabs off it isn't floating by choice: it joins once tabs are back on
