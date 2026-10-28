@@ -521,7 +521,9 @@ final class WM {
                 // the other tabs' tucked-away slivers are still on screen, so this is the bar's
                 // Space and its shown window went away. it has to stay gone for a moment: going
                 // full screen also leaves this Space, before macOS marks the window full screen.
-                if !parked.contains(g.active), g.hidden.contains(where: { live[$0] != nil && parked.contains($0) }) {
+                // a sliver is mostly off screen: a tab that went full screen while tucked away
+                // is listed on its own Space, and isn't one.
+                if !parked.contains(g.active), g.hidden.contains(where: { parked.contains($0) && !(live[$0].map(visible) ?? true) }) {
                     if let since = missingSince[g.id] {
                         if Date().timeIntervalSince(since) > 0.6 {
                             missingSince[g.id] = nil
@@ -543,7 +545,7 @@ final class WM {
             }
             // a full screen window (a video, say) owns the whole display: no bar on it, and
             // ordering the bar above it would pull the bar into its full screen Space
-            if covers(r) {
+            if covers(r) || spans(r) && tracker.wins[g.active]?.fullscreen == true {
                 strips[g.id]?.orderOut(nil)
                 if tracker.wins[g.active]?.fullscreen == true { stepAside(g) }
                 continue
@@ -970,6 +972,13 @@ final class WM {
     // without macOS's full screen
     func covers(_ r: CGRect) -> Bool {
         Display.all.contains { r.insetBy(dx: -1, dy: -1).contains($0.frame) }
+    }
+
+    // as wide as a display and down to its bottom. with the menu bar kept in full screen
+    // (Menu Bar › Automatically hide and show the menu bar: Never) a full screen window
+    // stops under the menu bar, so it never covers its display: ask the app instead.
+    func spans(_ r: CGRect) -> Bool {
+        Display.all.contains { abs(r.minX - $0.frame.minX) < 2 && abs(r.maxX - $0.frame.maxX) < 2 && abs(r.maxY - $0.frame.maxY) < 2 }
     }
 
     // mostly on some display (a window left parked by a crash isn't)
