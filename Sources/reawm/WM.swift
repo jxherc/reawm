@@ -135,7 +135,7 @@ final class WM {
             if exists(w.id), let partner = g.wins.first { returnTo[w.id] = partner }
         case .focused:
             // a hidden tab you reach some other way (⌘`, the Dock, Window menu) comes to the front
-            guard tear == nil, let g = groups.group(of: w.id), w.frame != nil, Spaces.showing(w.id) else { return }
+            guard tear == nil, let g = groups.group(of: w.id), w.frame != nil, Spaces.showing(w.id), !w.fullscreen else { return }
             if g.active == w.id { glue(g); return }
             // only the app in front can pull its window forward: apps in the back re-report
             // focus when we move their windows, and following that flips tabs back and forth.
@@ -279,7 +279,7 @@ final class WM {
                 .max { (lastShown[$0.id] ?? .distantPast) < (lastShown[$1.id] ?? .distantPast) }
         }
         // an empty desktop makes Finder the front app: that's no reason to change a bar on another desktop
-        guard let w, let g = groups.group(of: w.id), g.active != w.id, Spaces.showing(w.id) else { return }
+        guard let w, let g = groups.group(of: w.id), g.active != w.id, Spaces.showing(w.id), !w.fullscreen else { return }
         switchTo(w.id, in: g, focus: false)
     }
 
@@ -303,7 +303,7 @@ final class WM {
         glue(g)
     }
 
-    func switchTo(_ id: WinID, in g: Group, focus: Bool = true) {
+    func switchTo(_ id: WinID, in g: Group, focus: Bool = true, at f: CGRect? = nil) {
         lastGroup = g.id
         note("show \(id) (\(tracker.wins[id]?.app?.localizedName ?? "?")) was \(g.active)\(focus ? "" : ", following focus")")
         // frames[g.id] is kept up to date elsewhere. reading the old tab's frame here
@@ -311,7 +311,7 @@ final class WM {
         if g.active != id { cameFrom[g.id] = g.active }
         groups.select(id)
         quietUntil = Date().addingTimeInterval(0.35)
-        show(g)
+        show(g, at: f)
         if focus { tracker.wins[id]?.focus() }
         changed()
     }
@@ -332,7 +332,8 @@ final class WM {
               !parked.contains(id) || Date().timeIntervalSince(parkedAt[id] ?? .distantPast) > 1 else { return }
         if NSWorkspace.shared.frontmostApplication?.processIdentifier == w.pid {
             note("hidden tab \(id) came back on screen, showing it")
-            switchTo(id, in: g, focus: false)
+            // at the bar's size: an app restores a window leaving full screen to a size of its own
+            switchTo(id, in: g, focus: false, at: frames[g.id])
         } else {
             note("hidden tab \(id) came back on screen, tucking it away")
             park(w, near: frames[g.id] ?? f)
@@ -463,6 +464,7 @@ final class WM {
             // ordering the bar above it would pull the bar into its full screen Space
             if covers(r) {
                 strips[g.id]?.orderOut(nil)
+                if tracker.wins[g.active]?.fullscreen == true { stepAside(g) }
                 continue
             }
             if let h = g.hidden.first(where: { live[$0].map(visible) ?? false }) {
@@ -532,6 +534,19 @@ final class WM {
         groups.remove(a.id)
         settle(g, shownLeft: true)
         if let partner = g.wins.first { returnTo[a.id] = partner }
+    }
+
+    // the shown tab went full screen, onto a Space of its own. the desktop it left keeps a
+    // tab showing, or it'd sit empty with no bar, and windows opened meanwhile would join
+    // behind a tab you can't see. nothing gets focus: that would pull you out of full
+    // screen. leaving full screen brings the window back on screen, and summoned() gives
+    // it the bar's spot again.
+    func stepAside(_ g: Group) {
+        guard tear == nil, !windowDrag, let a = tracker.wins[g.active] else { return }
+        let ok = { [tracker] (id: WinID) in id != a.id && !(tracker.wins[id]?.fullscreen ?? true) }
+        guard let back = cameFrom[g.id].flatMap({ g.wins.contains($0) && ok($0) ? $0 : nil }) ?? g.wins.first(where: ok) else { return }
+        note("\(a.id) (\(a.app?.localizedName ?? "?")) went full screen, the desktop shows \(back)")
+        switchTo(back, in: g, focus: false)
     }
 
     // a vanished tab's window is back on screen: it rejoins its bar as the shown tab
