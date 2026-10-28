@@ -6,7 +6,7 @@
 
 macOS menu bar app that turns your windows into browser-style tabs.
 
-![reawm's tab bar switching between three windows](docs/demo.gif)
+![reawm's tab bar: a new window opening next to the current tab, dragged out with ⌥⌘ and back in, closed with a middle-click, then the displays menu and a window going full screen](docs/demo.gif)
 
 the windows on a display share one tab bar. one window shows at a time, filling the space under the bar, while the rest wait out of sight until you pick their tab. a new window joins the bar right after the tab you're on, as the shown tab, or quietly behind it when its app opened it in the background. the bar has no background of its own, so it reads like a second row of the menu bar.
 
@@ -31,8 +31,6 @@ to take the shown window out of its bar, hold ⌥⌘ while you drag it by its ti
 ⌘-tabbing to an app shows its window. minimizing the shown window minimizes the whole bar, and clicking it in the Dock brings the bar back. a window that goes full screen hands its spot to the tab you came from, so the desktop keeps a bar, and takes the spot back when it leaves full screen.
 
 the menu bar icon has the rest: the bar on the top, left or right, which displays get bars (all of them, only the main one, or the ones you tick), a switch for "tab every window", "no tabs" for whichever app is in front, pause and quit.
-
-![a new window opening next to the current tab, dragged out with ⌥⌘ and back in, closed with a middle-click, then the displays menu and a window going full screen](docs/features.gif)
 
 ## how it hides windows
 
