@@ -32,6 +32,8 @@ to take the shown window out of its bar, hold ⌥⌘ while you drag it by its ti
 
 the menu bar icon has the rest: the bar on the top, left or right, which displays get bars (all of them, only the main one, or the ones you tick), a switch for "tab every window", "no tabs" for whichever app is in front, pause and quit.
 
+![a new window opening next to the current tab, dragged out with ⌥⌘ and back in, closed with a middle-click, then the displays menu and a window going full screen](docs/features.gif)
+
 ## how it hides windows
 
 macOS can't hide a single window of an app, so reawm moves hidden tabs past the bottom corner of the screen with one point left showing. quitting or pausing puts every window back where it was before it joined a bar.
