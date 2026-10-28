@@ -13,6 +13,8 @@ enum Settings {
             "dropHold": 0.25,    // seconds to rest on a target before a drop would join it
             "autoTab": true,     // every window joins its display's bar
             "excluded": [String](),
+            "displays": "all",          // which displays get bars: all, main or custom
+            "offDisplays": [String](),  // with custom: the ones switched off, by display uuid
             "paused": false,
         ])
     }
@@ -36,6 +38,17 @@ enum Settings {
     static var excluded: Set<String> {
         get { Set(d.stringArray(forKey: "excluded") ?? []) }
         set { d.set(Array(newValue).sorted(), forKey: "excluded") }
+    }
+
+    enum Displays: String { case all, main, custom }
+    static var displays: Displays {
+        get { Displays(rawValue: d.string(forKey: "displays") ?? "") ?? .all }
+        set { d.set(newValue.rawValue, forKey: "displays") }
+    }
+
+    static var offDisplays: Set<String> {
+        get { Set(d.stringArray(forKey: "offDisplays") ?? []) }
+        set { d.set(Array(newValue).sorted(), forKey: "offDisplays") }
     }
 
     static var paused: Bool {

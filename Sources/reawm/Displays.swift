@@ -22,6 +22,18 @@ struct Display {
         }
     }
 
+    // the main display is the one System Settings puts the menu bar on
+    var main: Bool { CGDisplayIsMain(id) != 0 }
+
+    // whether this display gets a bar (menu > Displays)
+    var tabbed: Bool {
+        switch Settings.displays {
+        case .all: return true
+        case .main: return main
+        case .custom: return !Settings.offDisplays.contains(uuid)
+        }
+    }
+
     static func at(_ pt: CGPoint) -> Display? {
         let all = all
         return all.first { $0.frame.contains(pt) } ?? all.first

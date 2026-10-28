@@ -75,6 +75,22 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let si = NSMenuItem(title: "Tab Bar", action: nil, keyEquivalent: "")
         si.submenu = sides
         m.addItem(si)
+        let screens = NSMenu()
+        let all = entry("All Displays", #selector(setDisplays(_:)), Settings.Displays.all.rawValue)
+        all.state = Settings.displays == .all ? .on : .off
+        let main = entry("Main Display Only", #selector(setDisplays(_:)), Settings.Displays.main.rawValue)
+        main.state = Settings.displays == .main ? .on : .off
+        screens.addItem(all)
+        screens.addItem(main)
+        screens.addItem(.separator())
+        for d in Display.all {
+            let i = entry(d.screen.localizedName, #selector(toggleDisplay(_:)), d.uuid)
+            i.state = d.tabbed ? .on : .off
+            screens.addItem(i)
+        }
+        let di = NSMenuItem(title: "Displays", action: nil, keyEquivalent: "")
+        di.submenu = screens
+        m.addItem(di)
         let auto = entry("Tab Every Window", #selector(cmd(_:)), "auto")
         auto.state = Settings.autoTab ? .on : .off
         m.addItem(auto)
@@ -102,6 +118,22 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let r = i.representedObject as? String, let side = Settings.Side(rawValue: r) { wm.setSide(side) }
     }
     @objc func quit() { NSApp.terminate(nil) }
+
+    @objc func setDisplays(_ i: NSMenuItem) {
+        guard let r = i.representedObject as? String, let mode = Settings.Displays(rawValue: r) else { return }
+        Settings.displays = mode
+        wm.applyDisplays()
+    }
+
+    // ticking one display by hand starts from what's on now
+    @objc func toggleDisplay(_ i: NSMenuItem) {
+        guard let u = i.representedObject as? String else { return }
+        var off = Set(Display.all.filter { !$0.tabbed }.map(\.uuid))
+        if off.contains(u) { off.remove(u) } else { off.insert(u) }
+        Settings.offDisplays = off
+        Settings.displays = .custom
+        wm.applyDisplays()
+    }
 
     @objc func exclude(_ i: NSMenuItem) {
         guard let b = i.representedObject as? String else { return }

@@ -460,6 +460,11 @@ final class WM {
                 continue
             }
             missingSince[g.id] = nil
+            // its display is switched off for tabs (menu > Displays), or the bar was dragged onto one
+            if let d = Display.at(CGPoint(x: r.midX, y: r.midY)), !d.tabbed {
+                dissolve(g)
+                continue
+            }
             // a full screen window (a video, say) owns the whole display: no bar on it, and
             // ordering the bar above it would pull the bar into its full screen Space
             if covers(r) {
@@ -676,6 +681,7 @@ final class WM {
     // the window or strip under p that a drop would join. only a window's title
     // bar counts, so ordinary moves over other windows never make tabs.
     func target(at p: CGPoint, dragging w: WinID) -> Target? {
+        guard Display.at(p)?.tabbed ?? false else { return nil }
         guard let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
         let mine = Dictionary(strips.map { (WinID($0.value.windowNumber), $0.key) }, uniquingKeysWith: { a, _ in a })
         for d in info {
@@ -1030,6 +1036,34 @@ final class WM {
         onChange?()
     }
 
+    // a bar on a display that's switched off for tabs comes apart: its windows go back
+    // where they were before they joined, or stay at the bar's spot
+    func dissolve(_ g: Group) {
+        note("bar \(g.id.uuidString.prefix(4)) comes apart, its display has no tabs")
+        let f = frames[g.id]
+        for id in g.wins {
+            guard let w = tracker.wins[id] else { continue }
+            if let o = orig[id], visible(o) { place(w, o) } else if let f { place(w, f) }
+            orig[id] = nil
+        }
+        g.wins.forEach { groups.remove($0) }
+        strips[g.id]?.orderOut(nil)
+        strips[g.id] = nil
+        frames[g.id] = nil
+        homes = homes.filter { $0.value != g.id }
+        changed()
+    }
+
+    // menu > Displays changed: bars leave displays that were switched off, and
+    // displays switched on get theirs
+    func applyDisplays() {
+        for g in groups.all {
+            guard let f = frames[g.id], let d = Display.at(CGPoint(x: f.midX, y: f.midY)), !d.tabbed else { continue }
+            dissolve(g)
+        }
+        adoptAll()
+    }
+
     // an app you've just said "no tabs" to: its windows leave their bars and go back where they were
     func release(bundle: String) {
         for w in tracker.wins.values where w.bundle == bundle {
@@ -1084,6 +1118,7 @@ final class WM {
     func eligible(_ w: Win) -> Bool {
         w.dynamic && !Settings.excluded.contains(w.bundle) && !loose.contains(w.id) && !unfit.contains(w.id) && groups.group(of: w.id) == nil
             && !w.minimized && !w.fullscreen && isOnScreen(w.id) && (w.frame.map(visible) ?? false)
+            && (w.frame.flatMap { Display.at(CGPoint(x: $0.midX, y: $0.midY)) }?.tabbed ?? false)
     }
 
     // new windows settle their size and spot first
@@ -1095,7 +1130,8 @@ final class WM {
             guard let self, tracker.wins[w.id] != nil, groups.group(of: w.id) == nil else { return }
             if eligible(w) { adopt(w); return }
             if tries > 1 { adoptSoon(w, orFloat: orFloat, tries: tries - 1); return }
-            guard orFloat, !loose.contains(w.id) else { return }
+            // on a display with tabs off it isn't floating by choice: it joins once tabs are back on
+            guard orFloat, !loose.contains(w.id), w.frame.flatMap({ Display.at(CGPoint(x: $0.midX, y: $0.midY)) })?.tabbed ?? true else { return }
             loose.insert(w.id)
             note("new window \(w.id) (\(w.app?.localizedName ?? "?")) floats")
             changed()
@@ -1132,7 +1168,7 @@ final class WM {
             guard (d[kCGWindowLayer as String] as? Int) == 0, let id = d[kCGWindowNumber as String] as? WinID else { return nil }
             return tracker.wins[id]
         }.filter(eligible)
-        for d in Display.all {
+        for d in Display.all where d.tabbed {
             let ws = order.filter { w in w.frame.map { d.frame.contains(CGPoint(x: $0.midX, y: $0.midY)) } ?? false }
             guard !ws.isEmpty else { continue }
             let k = homeKey(d)
