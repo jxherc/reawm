@@ -16,6 +16,8 @@ drag a window by its title bar onto another window's title bar (or onto a tab ba
 
 on the bar, click a tab to show it, drag tabs sideways to reorder them, or drag one off the bar to pull that window back out. hover a tab for its ×, or middle-click it to close it like in a browser. if you're dragging a file or some text, hold it over a tab for half a second and that tab opens so you can drop into it.
 
+to take the shown window out of its bar, hold ⌥⌘ while you drag it by its title bar. let go anywhere and it's a window of its own again, or let go over another window's title bar or another bar and it joins that one.
+
 | keys | does |
 |---|---|
 | ⌥1 to ⌥8 | show that tab |
@@ -26,9 +28,9 @@ on the bar, click a tab to show it, drag tabs sideways to reorder them, or drag 
 
 ⌥⌘ on a floating window puts it into the bar at that spot.
 
-⌘-tabbing to an app shows its window. minimizing the shown window minimizes the whole bar, and clicking it in the Dock brings the bar back.
+⌘-tabbing to an app shows its window. minimizing the shown window minimizes the whole bar, and clicking it in the Dock brings the bar back. a window that goes full screen hands its spot to the tab you came from, so the desktop keeps a bar, and takes the spot back when it leaves full screen.
 
-the menu bar icon has the rest: the bar on the top, left or right, a switch for "tab every window", "no tabs" for whichever app is in front, pause and quit.
+the menu bar icon has the rest: the bar on the top, left or right, which displays get bars (all of them, only the main one, or the ones you tick), a switch for "tab every window", "no tabs" for whichever app is in front, pause and quit.
 
 ## how it hides windows
 
@@ -50,7 +52,7 @@ grab the zip from the [latest release](https://github.com/jxherc/reawm/releases/
 
 the download isn't notarized, so macOS refuses to open it the first time. go to System Settings → Privacy & Security, scroll down to the line about reawm and click Open Anyway, or run `xattr -dr com.apple.quarantine /Applications/reawm.app` once.
 
-then it asks for Accessibility access (System Settings → Privacy & Security → Accessibility), which it needs to move other apps' windows, and it starts working the moment you allow it.
+then it opens System Settings on the list of apps allowed to control your Mac (Privacy & Security → Accessibility, called Device Control and Data Access on macOS 27). switch reawm on there, or add it with + if it isn't listed. it needs that to move other apps' windows, and it starts working the moment you allow it.
 
 ## scripting
 
@@ -61,6 +63,7 @@ then it asks for Accessibility access (System Settings → Privacy & Security �
 - ⌥1 to ⌥9 are global shortcuts, so those keys stop typing ™, £ and • in every app.
 - apps that grab the whole keyboard (iPhone mirroring, VMs, remote desktops) swallow the shortcuts while they're in front.
 - if reawm crashes, hidden tabs stay parked in the corner until you open it again.
+- apps that only draw while their window is on screen, like a VM's window, freeze while they're a hidden tab. pick "no tabs" for them in the menu.
 - `~/Library/Logs/reawm.log` records every switch and the reason for it, which helps when something looks off.
 
 ## license
