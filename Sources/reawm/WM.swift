@@ -49,6 +49,7 @@ final class WM {
         var resizing = false
         var edges: Set<Settings.Side> = []   // which edges a resize is dragging
         var edgesKnown = false
+        var pulling = false   // pressed on its title bar with ⌥⌘ held: a drag takes it out of its bar
     }
 
     // a window being moved or resized by hand. a press that drags content out of a
@@ -81,7 +82,7 @@ final class WM {
         groups.prune(keeping: existing())
 
         if !tap.start() { NSLog("reawm: event tap failed, dragging windows into tabs is off") }
-        tap.onMouse = { [weak self] t, p in self?.mouse(t, p) }
+        tap.onMouse = { [weak self] t, p, k in self?.mouse(t, p, k) ?? (nil, []) }
         if keyTap.start() {
             keyTap.onKey = { [weak self] k, f, rep in self?.shortcut(k, f, rep) ?? false }
         } else {
@@ -616,16 +617,23 @@ final class WM {
 
     // MARK: dragging
 
-    // returns where the event should land instead, when a drag hits the bar's wall
-    func mouse(_ t: CGEventType, _ p: CGPoint) -> CGPoint? {
-        guard !Settings.paused else { return nil }
-        if tear != nil { tearMouse(t, p); return nil }
+    // returns where the event should land instead, when a drag hits the bar's wall, and
+    // the modifier keys macOS mustn't see on it
+    func mouse(_ t: CGEventType, _ p: CGPoint, _ k: CGEventFlags) -> (CGPoint?, CGEventFlags) {
+        guard !Settings.paused else { return (nil, []) }
+        if tear != nil { tearMouse(t, p); return (nil, []) }
+        let pullKeys: CGEventFlags = [.maskAlternate, .maskCommand]
         switch t {
         case .leftMouseDown:
-            guard let w = tracker.win(at: p), let f = w.frame else { grab = nil; return nil }
-            grab = Grab(win: w, start: f, at: p)
+            guard let w = tracker.win(at: p), let f = w.frame else { grab = nil; return (nil, []) }
+            var g = Grab(win: w, start: f, at: p)
+            // ⌥⌘ on the shown window's title bar pulls it out of its bar. macOS would take
+            // a drag with ⌥ held for its own tiling, so it never sees those keys on this drag.
+            g.pulling = k.contains(pullKeys) && groups.group(of: w.id)?.active == w.id && p.y <= f.minY + Settings.titleBand
+            grab = g
+            return (nil, g.pulling ? pullKeys : [])
         case .leftMouseDragged:
-            guard var g = grab else { return nil }
+            guard var g = grab else { return (nil, []) }
             var p = p
             if !g.moving, !g.resizing, let f = g.win.frame {
                 if f.size != g.start.size { g.resizing = true } else if f.origin != g.start.origin { g.moving = true }
@@ -637,7 +645,7 @@ final class WM {
                 if f.minX != g.start.minX { g.edges.insert(.left) }
                 if f.maxX != g.start.maxX { g.edges.insert(.right) }
             }
-            if g.moving || g.resizing, let gr = groups.group(of: g.win.id), gr.active == g.win.id {
+            if !g.pulling, g.moving || g.resizing, let gr = groups.group(of: g.win.id), gr.active == g.win.id {
                 // the bar is a wall: the window can't be dragged into it. hold the pointer
                 // there, so the window simply stops instead of snapping back later.
                 let w = wall(g, p)
@@ -653,17 +661,24 @@ final class WM {
                     s.move(stripRect(g.start.offsetBy(dx: p.x - g.at.x, dy: p.y - g.at.y)))
                 }
             }
-            // a grouped window's title bar moves the whole group, it doesn't join anything
-            if g.moving, g.win.resizable, groups.group(of: g.win.id) == nil, !Settings.excluded.contains(g.win.bundle) {
+            // a grouped window's title bar moves the whole group, it doesn't join anything,
+            // unless ⌥⌘ is pulling it out: then it can land on another bar
+            if g.moving, g.win.resizable, groups.group(of: g.win.id) == nil || g.pulling, !Settings.excluded.contains(g.win.bundle) {
                 aim(p, dragging: g.win.id)
             }
             grab = g
-            return p
+            return (p, g.pulling ? pullKeys : [])
         case .leftMouseUp:
-            guard let g = grab else { return nil }
+            guard let g = grab else { return (nil, []) }
             grab = nil
-            if let t = endAim() {
+            let t = endAim()
+            // by how far the pointer went: the window's frame can still lag behind on release
+            let pulled = g.pulling && hypot(p.x - g.at.x, p.y - g.at.y) > 4
+            if pulled, let gr = groups.group(of: g.win.id) { pull(g.win, from: gr) }
+            if let t {
                 join(g.win, t)
+            } else if pulled {
+                g.win.focus()
             } else if g.moving || g.resizing, let gr = groups.group(of: g.win.id), gr.active == g.win.id, let f = g.win.frame, f != g.start {
                 if roomy(f) != f {
                     show(gr, at: roomy(f))
@@ -672,10 +687,11 @@ final class WM {
                     glue(gr)
                 }
             }
+            return (nil, g.pulling ? pullKeys : [])
         default:
             break
         }
-        return nil
+        return (nil, [])
     }
 
     // the window or strip under p that a drop would join. only a window's title
@@ -747,6 +763,17 @@ final class WM {
         w.focus()
         checkFitSoon([w.id, tw.id], g)
         changed()
+    }
+
+    // the shown window dragged out with ⌥⌘ stays where it was dropped, a window of its
+    // own again, and the bar shows the tab before it
+    func pull(_ w: Win, from g: Group) {
+        note("pulled \(w.id) (\(w.app?.localizedName ?? "?")) out of its bar")
+        let shown = g.active == w.id
+        groups.remove(w.id)
+        loose.insert(w.id)
+        orig[w.id] = nil
+        settle(g, shownLeft: shown)
     }
 
     // pull a tab out of its group; it follows the mouse until let go

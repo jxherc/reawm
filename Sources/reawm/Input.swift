@@ -3,8 +3,9 @@ import Carbon
 
 // one event tap that watches the left mouse button (window drags)
 final class Tap {
-    // return a point to move the event there before any app sees it (the bar's wall)
-    var onMouse: ((CGEventType, CGPoint) -> CGPoint?)?
+    // return a point to move the event there before any app sees it (the bar's wall),
+    // and modifier keys to take off it (a ⌥⌘ pull mustn't look like macOS's ⌥ tiling drag)
+    var onMouse: ((CGEventType, CGPoint, CGEventFlags) -> (CGPoint?, CGEventFlags))?
     private var port: CFMachPort?
 
     func start() -> Bool {
@@ -27,11 +28,13 @@ final class Tap {
             let p = e.location
             // the app resizing or moving its window reads this event, so the limit has to
             // be in the event itself: moving the pointer afterwards is a frame too late
-            if let q = onMouse?(type, p), q != p {
+            guard let (q, strip) = onMouse?(type, p, e.flags) else { return }
+            if let q, q != p {
                 e.location = q
                 if q.y != p.y { e.setIntegerValueField(.mouseEventDeltaY, value: 0) }
                 if q.x != p.x { e.setIntegerValueField(.mouseEventDeltaX, value: 0) }
             }
+            if !strip.isEmpty { e.flags = e.flags.subtracting(strip) }
         default:
             break
         }
