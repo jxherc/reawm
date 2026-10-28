@@ -129,8 +129,13 @@ final class Win {
 enum Access {
     static var trusted: Bool { AXIsProcessTrusted() }
 
+    // a fresh macOS 27.2 showed neither the prompt nor reawm in the list, so open the
+    // list too: reawm gets added there with +
     static func ask() {
         let k = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         AXIsProcessTrustedWithOptions([k: true] as CFDictionary)
+        if let u = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(u)
+        }
     }
 }
