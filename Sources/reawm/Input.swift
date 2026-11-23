@@ -49,7 +49,7 @@ private func tapCallback(_ proxy: CGEventTapProxy, _ type: CGEventType, _ e: CGE
 // the tab shortcuts, caught before any app sees the key: some apps get keys ahead of
 // Carbon hotkeys, so those didn't fire everywhere. return true from onKey to take it.
 final class KeyTap {
-    var onKey: ((Int, CGEventFlags, Bool) -> Bool)?   // key code, modifiers, is a repeat
+    var onKey: (@Sendable (Int, CGEventFlags, Bool) -> Bool)?   // key code, modifiers, is a repeat
     private var port: CFMachPort?
     private var taken: Set<Int64> = []   // keys whose key-up we swallow too
 
@@ -59,8 +59,17 @@ final class KeyTap {
         guard let port = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
                                            eventsOfInterest: mask, callback: keyCallback, userInfo: me) else { return false }
         self.port = port
-        CFRunLoopAddSource(CFRunLoopGetMain(), CFMachPortCreateRunLoopSource(nil, port, 0), .commonModes)
-        CGEvent.tapEnable(tap: port, enable: true)
+        // every key on the mac waits for this tap, so it runs on a thread of its own: on the main
+        // thread, any wait there (an app slow to answer accessibility) stalled all typing
+        let src = CFMachPortCreateRunLoopSource(nil, port, 0)
+        let t = Thread {
+            CFRunLoopAddSource(CFRunLoopGetCurrent(), src, .commonModes)
+            CGEvent.tapEnable(tap: port, enable: true)
+            CFRunLoopRun()
+        }
+        t.name = "reawm keys"
+        t.qualityOfService = .userInteractive
+        t.start()
         return true
     }
 

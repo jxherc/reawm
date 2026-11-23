@@ -1,5 +1,6 @@
 import AppKit
 import Core
+import os
 
 // tab groups for any windows: drop a window on another one's title bar and they
 // become tabs in one frame, with a browser-style strip on top
@@ -39,6 +40,7 @@ final class WM {
     private var asleep = false
     private var holdUntil = Date.distantPast
     private var resumeWork: DispatchWorkItem?
+    private let barsUp = OSAllocatedUnfairLock(initialState: false)   // for the key tap's thread
 
     private var cand: (t: Target, at: CGPoint)?
     private var armed: Target?
@@ -78,6 +80,7 @@ final class WM {
     func start() {
         guard !started else { return }
         started = true
+        note("reawm \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev") started, pid \(getpid())")
         load()
         tracker.onEvent = { [weak self] e, w in self?.event(e, w) }
         tracker.onDestroyed = { [weak self] in self?.reapSoon() }
@@ -87,9 +90,8 @@ final class WM {
 
         if !tap.start() { NSLog("reawm: event tap failed, dragging windows into tabs is off") }
         tap.onMouse = { [weak self] t, p, k in self?.mouse(t, p, k) ?? (nil, []) }
-        if keyTap.start() {
-            keyTap.onKey = { [weak self] k, f, rep in self?.shortcut(k, f, rep) ?? false }
-        } else {
+        keyTap.onKey = { [weak self] k, f, rep in self?.shortcut(k, f, rep) ?? false }
+        if !keyTap.start() {
             NSLog("reawm: key tap failed, falling back to Carbon hotkeys")
             bindKeys()
         }
@@ -511,7 +513,7 @@ final class WM {
         }
         strips.values.forEach { $0.match(look) }
         reap()
-        let live = onScreen(unknown: { [tracker] in tracker.look($0) })
+        let (live, z) = listing(unknown: { [tracker] in tracker.look($0) })
         returned(live)
         for g in groups.all {
             if let t = tear, g.wins.contains(t.win.id) { continue }
@@ -572,7 +574,9 @@ final class WM {
                 seen[g.id] = (r, Date())
             }
             s.move(stripRect(roomy(r)))
-            s.order(.above, relativeTo: Int(g.active))
+            // re-stacking costs WindowServer even when nothing changes (about 5 % per bar at this
+            // rate, measured), so only when another window got between the bar and its window
+            if z[WinID(s.windowNumber)].map({ $0 + 1 }) != z[g.active] { s.order(.above, relativeTo: Int(g.active)) }
             if roomy(r) != r, let a = tracker.wins[g.active] { clampSoon(a) }
         }
     }
@@ -1001,15 +1005,19 @@ final class WM {
         return d[kCGWindowIsOnscreen as String] as? Bool ?? false
     }
 
-    func onScreen(unknown: ((pid_t) -> Void)? = nil) -> [WinID: CGRect] {
-        guard let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return [:] }
-        var out: [WinID: CGRect] = [:]
+    func onScreen(unknown: ((pid_t) -> Void)? = nil) -> [WinID: CGRect] { listing(unknown: unknown).live }
+
+    // the on-screen windows and their place in the stack, front first
+    func listing(unknown: ((pid_t) -> Void)? = nil) -> (live: [WinID: CGRect], z: [WinID: Int]) {
+        guard let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return ([:], [:]) }
+        var out: [WinID: CGRect] = [:], z: [WinID: Int] = [:]
         for d in info {
             guard (d[kCGWindowLayer as String] as? Int) == 0, let id = d[kCGWindowNumber as String] as? WinID, let r = bounds(d) else { continue }
+            z[id] = z.count
             out[id] = r
             if let unknown, tracker.wins[id] == nil, r.height > 60, let pid = d[kCGWindowOwnerPID as String] as? pid_t { unknown(pid) }
         }
-        return out
+        return (out, z)
     }
 
     private func bounds(_ d: [String: Any]) -> CGRect? {
@@ -1083,8 +1091,9 @@ final class WM {
     }
 
     // the shortcuts, seen before any app gets the key. returns whether we took it.
-    func shortcut(_ k: Int, _ flags: CGEventFlags, _ rep: Bool) -> Bool {
-        guard !Settings.paused, !groups.all.isEmpty else { return false }
+    // runs on the key tap's own thread: it reads only what's safe there and hands the command to the main thread
+    nonisolated func shortcut(_ k: Int, _ flags: CGEventFlags, _ rep: Bool) -> Bool {
+        guard !Settings.paused, barsUp.withLock({ $0 }) else { return false }
         let mods = flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift])
         let digit = Hotkeys.digits.firstIndex(of: k).map { $0 + 1 }
         var c: (String, Int?)?
@@ -1100,7 +1109,7 @@ final class WM {
         guard let (cmd, n) = c else { return false }
         // holding ⌥⇥ keeps stepping; a held digit does it once
         if rep && cmd != "next" && cmd != "prev" { return true }
-        DispatchQueue.main.async { [weak self] in self?.command(cmd, n: n) }
+        DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.command(cmd, n: n) } }
         return true
     }
 
@@ -1370,6 +1379,8 @@ final class WM {
     }
 
     func changed() {
+        let up = !groups.all.isEmpty
+        barsUp.withLock { $0 = up }
         saveSoon?.cancel()
         let w = DispatchWorkItem { [weak self] in self?.save() }
         saveSoon = w

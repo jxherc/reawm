@@ -33,14 +33,15 @@ final class Tracker {
 
     private var live = false   // past the first look at every app
 
-    // fresh: the app just launched, so its windows are new ones
-    func watch(_ app: NSRunningApplication, fresh: Bool = false) {
+    // fresh: the app just launched, so its windows are new ones. false when it didn't answer.
+    @discardableResult
+    func watch(_ app: NSRunningApplication, fresh: Bool = false) -> Bool {
         let pid = app.processIdentifier
-        guard app.activationPolicy == .regular, pid != getpid(), observers[pid] == nil else { return }
+        guard app.activationPolicy == .regular, pid != getpid(), observers[pid] == nil else { return false }
         let el = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(el, 1)
         var obs: AXObserver?
-        guard AXObserverCreate(pid, axCallback, &obs) == .success, let obs else { return }
+        guard AXObserverCreate(pid, axCallback, &obs) == .success, let obs else { return false }
         let me = Unmanaged.passUnretained(self).toOpaque()
         // window-level "destroyed" never arrives on macOS 27, the app-level one does
         for n in [kAXWindowCreatedNotification, kAXFocusedWindowChangedNotification, kAXUIElementDestroyedNotification] {
@@ -49,7 +50,7 @@ final class Tracker {
         CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(obs), .defaultMode)
         observers[pid] = obs
         appEls[pid] = el
-        scan(pid, fresh: fresh)
+        return scan(pid, fresh: fresh)
     }
 
     func unwatch(_ pid: pid_t) {
@@ -63,10 +64,15 @@ final class Tracker {
         }
     }
 
-    // pick up windows we haven't seen (also used after a Space switch)
-    func scan(_ pid: pid_t, fresh: Bool = false) {
-        guard let el = appEls[pid], let list: [AXUIElement] = el.get(kAXWindowsAttribute) else { return }
-        for w in list { add(w, pid: pid, created: fresh) }
+    // pick up windows we haven't seen (also used after a Space switch). false when the app
+    // didn't answer in time (busy, or not answering accessibility at all)
+    @discardableResult
+    func scan(_ pid: pid_t, fresh: Bool = false) -> Bool {
+        guard let el = appEls[pid] else { return false }
+        var v: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(el, kAXWindowsAttribute as CFString, &v) == .success else { return false }
+        for w in (v as? [AXUIElement]) ?? [] { add(w, pid: pid, created: fresh) }
+        return true
     }
 
     func rescan() {
@@ -75,12 +81,18 @@ final class Tracker {
 
     // a window on screen we don't know about: ask its app again. an app that was busy
     // when we first looked can come back with no windows, and nothing tells us later.
+    // an app that doesn't answer (wechat often doesn't) held the main thread for the whole
+    // timeout on every ask, every 3 s, so it's asked less and less often, up to every 10 minutes
     private var lastLook: [pid_t: Date] = [:]
+    private var lookWait: [pid_t: TimeInterval] = [:]
     func look(_ pid: pid_t) {
-        guard pid != getpid(), Date().timeIntervalSince(lastLook[pid] ?? .distantPast) > 3 else { return }
+        let wait = lookWait[pid] ?? 3
+        guard pid != getpid(), Date().timeIntervalSince(lastLook[pid] ?? .distantPast) > wait else { return }
         lastLook[pid] = Date()
         // a window we only notice now is one that just showed up, so it floats like any new window
-        if observers[pid] == nil, let app = NSRunningApplication(processIdentifier: pid) { watch(app, fresh: true) } else { scan(pid, fresh: true) }
+        let answered: Bool
+        if observers[pid] == nil, let app = NSRunningApplication(processIdentifier: pid) { answered = watch(app, fresh: true) } else { answered = scan(pid, fresh: true) }
+        lookWait[pid] = answered ? 3 : min(wait * 4, 600)
     }
 
     @discardableResult
